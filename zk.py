@@ -4,14 +4,14 @@ from datetime import datetime
 import time
 
 # Set Software ZkBio Time Software URL, Username and password
-# BASE_URL = "http://127.0.0.1:8080"
-# USERNAME = "admin"
-# PASSWORD = "admin@123"
+BASE_URL = "http://127.0.0.1:8080"
+USERNAME = "admin"
+PASSWORD = "admin@123"
 
 
 # Erpnext config
-ERPNEXT_API_KEY = ''
-ERPNEXT_API_SECRET = ''
+ERPNEXT_API_KEY = '3e6ad70ba357e1f'
+ERPNEXT_API_SECRET = 'cfc4057a78a5a9d'
 ERPNEXT_URL = 'https://demo.erprf.com'
 ERPNEXT_VERSION = 15
 # Set time
@@ -107,44 +107,66 @@ def fetch_attendance_data(emp_code, token):
     else:
         print(f"❌ Failed to fetch attendance for employee {emp_code}")
         return []
-
-# Step 5: Sync employee check-in data to ERPNext
 def sync_employee_checkin_to_erpnext(employee, attendance_records, devices):
-    # Check if the employee exists in ERPNext
-    employee_url = f"{ERPNEXT_URL}/api/resource/Employee/{employee['emp_code']}"
-    response = requests.get(employee_url, headers=erpnext_headers)
+    """Sync Employee Checkins from external device to ERPNext."""
 
-    if response.status_code == 200:
-        print(f"✅ Employee {employee['emp_code']} exists in ERPNext, syncing check-in data.")
-        
-        # Select the first device (adjust if necessary to get the correct one)
-        device_id = devices[0]['id'] if devices else None
+    import json  # Ensure you have this
 
-        # Now sync check-ins for the employee
-        for record in attendance_records:
-            if record['punch_state_display'] == "Check In":
-                log_type = "IN"
+    # 1️⃣ Get Employee by filtering 'attendance_device_id' (correct syntax!)
+    employee_filter_url = f"{ERPNEXT_URL}/api/resource/Employee"
+    params = {
+        "filters": json.dumps([["attendance_device_id", "=", str(employee["emp_code"])]]),
+        "fields": json.dumps(["name", "attendance_device_id"])
+    }
 
-            # Prepare check-in data
-            checkin_data = {
-                "employee": employee['emp_code'],
-                "log_type": log_type,
-                "time": record['punch_time'],
-                "device_id": device_id
-            }
+    response = requests.get(employee_filter_url, headers=erpnext_headers, params=params)
 
-            # Correct API endpoint for creating employee check-in
-            checkin_url = f"{ERPNEXT_URL}/api/resource/Employee Checkin"
-            
-            # Send the request to ERPNext to create the check-in
-            checkin_response = requests.post(checkin_url, headers=erpnext_headers, data=json.dumps(checkin_data))
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch Employee from ERPNext. Status: {response.status_code}, Response: {response.text}")
+        return
 
-            if checkin_response.status_code == 200:
-                print(f"✅ Synced check-in for {employee['emp_code']} at {checkin_data['time']}")
-            else:
-                print(f"❌ Failed to sync check-in for {employee['emp_code']} at {checkin_data['time']}, error: {checkin_response.text}")
-    else:
-        print(f"❌ Employee {employee['emp_code']} does not exist in ERPNext. Skipping check-in sync.")
+    employees_in_erpnext = response.json().get("data", [])
+    print(employees_in_erpnext, "okkokoko")
+
+    if not employees_in_erpnext:
+        print(f"⚠️ No Employee found in ERPNext with attendance_device_id = {employee['emp_code']}. Skipping.")
+        return
+
+    matched_employee = employees_in_erpnext[0]
+    employee_name_in_erpnext = matched_employee.get("name")
+    device_id_in_erpnext = matched_employee.get("attendance_device_id")
+    
+    # 2️⃣ Filter external records
+    filtered_records = [
+        record for record in attendance_records
+        if str(record.get("emp_code")) == str(device_id_in_erpnext)
+    ]
+
+
+    if not filtered_records:
+        print(f"ℹ️ No matching attendance records found for Employee {employee_name_in_erpnext}.")
+        return
+
+    # 3️⃣ Push matching records
+    for record in filtered_records:
+        log_type = "IN" if record.get("punch_state_display") == "Check In" else "OUT"
+
+        checkin_data = {
+            "employee": employee_name_in_erpnext,
+            "log_type": log_type,
+            "time": record["punch_time"],
+            "device_id": device_id_in_erpnext
+        }
+
+        checkin_url = f"{ERPNEXT_URL}/api/resource/Employee Checkin"
+        checkin_response = requests.post(checkin_url, headers=erpnext_headers, data=json.dumps(checkin_data))
+
+        if checkin_response.status_code == 200:
+            print(f"✅ Synced check-in for Employee {employee_name_in_erpnext} at {checkin_data['time']}")
+        else:
+            print(f"❌ Failed to sync check-in for Employee {employee_name_in_erpnext} at {checkin_data['time']}. "
+                  f"Error: {checkin_response.text}")
+
 
 # Main sync function
 def sync_attendance():
