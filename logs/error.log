@@ -1,0 +1,277 @@
+2025-07-23 14:45:05,029	ERROR	Error fetching attendance from biotome: 401 Client Error: Unauthorized for url: http://127.0.0.1:8080/iclock/api/transactions/?start_time=2025-07-23+14%3A35%3A03&end_time=2025-07-23+14%3A45%3A04&page_size=1000
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 190, in get_attendance_from_biotime
+    res.raise_for_status()
+  File "C:\ZKBioTime\Python311\Lib\site-packages\requests\models.py", line 1021, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://127.0.0.1:8080/iclock/api/transactions/?start_time=2025-07-23+14%3A35%3A03&end_time=2025-07-23+14%3A45%3A04&page_size=1000
+2025-07-23 17:08:53,649	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:09:54,950	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:12:12,676	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:13:13,925	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:14:15,719	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:15:17,393	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:16:19,623	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:17:21,203	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:18:22,771	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:19:24,405	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:20:25,700	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:21:26,894	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:22:28,745	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:23:30,438	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:24:32,278	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:25:34,026	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:26:35,449	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:27:36,887	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:28:38,361	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:29:39,879	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:30:41,678	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:31:44,065	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 211, in get_attendance_from_biotime
+    dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:32:59,451	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 213, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:34:01,235	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 213, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:35:02,748	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 213, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:36:04,637	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 213, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:37:06,281	ERROR	Error fetching attendance from biotome: invalid mode: 'W+'
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 213, in get_attendance_from_biotime
+    with open(dump_file_name, 'W+') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: invalid mode: 'W+'
+2025-07-23 17:38:43,107	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:39:45,096	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:40:46,339	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:41:47,783	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:42:49,589	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:43:51,186	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:44:52,542	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:45:53,955	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:46:55,355	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:47:56,899	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:48:58,362	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:49:59,959	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:51:01,611	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:52:03,330	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:53:22,746	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:54:24,436	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:56:36,337	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
+2025-07-23 17:57:51,782	ERROR	Error fetching attendance from biotome: name 'TRUE' is not defined
+Traceback (most recent call last):
+  File "D:\Attendance\erpnext_sync.py", line 214, in get_attendance_from_biotime
+    os.makedirs(config.LOGS_DIRECTORY, exist_ok=TRUE)
+                                                ^^^^
+NameError: name 'TRUE' is not defined
