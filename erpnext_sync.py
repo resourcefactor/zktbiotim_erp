@@ -46,14 +46,29 @@ def main():
     try:
         last_lift_off_timestamp = _safe_convert_date(status.get('lift_off_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
         if (last_lift_off_timestamp and last_lift_off_timestamp < datetime.datetime.now() - datetime.timedelta(minutes=config.PULL_FREQUENCY)) or not last_lift_off_timestamp:
-            status.set('lift_off_timestamp', str(datetime.datetime.now()))
+            cycle_start_time = datetime.datetime.now()
+            status.set('lift_off_timestamp', str(cycle_start_time))
             status.save()
+
+            print(f"\n\n{'#'*60}")
+            print(f"#  ATTENDANCE SYNC CYCLE STARTED")
+            print(f"#  Time: {cycle_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"{'#'*60}\n")
             info_logger.info("Cleared for lift off!")
+
+            devices_processed = 0
+            devices_failed = 0
+
             for device in config.biotime_url:
                 device_attendance_logs = None
+                print(f"\n{'='*60}")
+                print(f"Processing Device: {device['device_id']}")
+                print(f"{'='*60}")
                 info_logger.info("Processing Device: "+ device['device_id'])
+
                 dump_file = get_dump_file_name_and_directory(device['device_id'], 'biotime')
                 if os.path.exists(dump_file):
+                    print(f"⚠ Warning: Dump file found - recovering from previous crash")
                     info_logger.error('Device Attendance Dump Found in Log Directory. This can mean the program crashed unexpectedly. Retrying with dumped data.')
                     with open(dump_file, 'r') as f:
                         file_contents = f.read()
@@ -64,18 +79,44 @@ def main():
                     status.set(f'{device["device_id"]}_push_timestamp', str(datetime.datetime.now()))
                     status.save()
                     if os.path.exists(dump_file):
-                        print("removedddddddddddddddddddddddddd")
                         os.remove(dump_file)
+                        print(f"✓ Removed dump file")
+                    print(f"✓ Successfully processed device: {device['device_id']}")
                     info_logger.info("Successfully processed Device: "+ device['device_id'])
-                except:
+                    devices_processed += 1
+                except Exception as e:
+                    print(f"✗ Error processing device: {device['device_id']}")
+                    print(f"  Error: {str(e)}")
                     error_logger.exception('exception when calling pull_process_and_push_data function for device'+json.dumps(device, default=str))
+                    devices_failed += 1
+
+            # Update shift types
             if hasattr(config,'shift_type_device_mapping'):
                 update_shift_last_sync_timestamp(config.shift_type_device_mapping)
-            status.set('mission_accomplished_timestamp', str(datetime.datetime.now()))
+
+            cycle_end_time = datetime.datetime.now()
+            cycle_duration = (cycle_end_time - cycle_start_time).total_seconds()
+
+            status.set('mission_accomplished_timestamp', str(cycle_end_time))
             status.save()
-            info_logger.info("Mission Accomplished!")
+
+            # Cycle Summary
+            print(f"\n{'#'*60}")
+            print(f"#  SYNC CYCLE COMPLETED")
+            print(f"#  Duration: {cycle_duration:.2f} seconds")
+            print(f"#  Devices Processed: {devices_processed}")
+            print(f"#  Devices Failed: {devices_failed}")
+            print(f"#  Next cycle in: {config.PULL_FREQUENCY} minute(s)")
+            print(f"{'#'*60}\n")
+            info_logger.info(f"Mission Accomplished! Duration: {cycle_duration:.2f}s, Processed: {devices_processed}, Failed: {devices_failed}")
+        else:
+            # Still waiting for next cycle
+            time_until_next = (last_lift_off_timestamp + datetime.timedelta(minutes=config.PULL_FREQUENCY) - datetime.datetime.now()).total_seconds()
+            if time_until_next > 0:
+                print(f"⏳ Waiting... Next sync in {int(time_until_next)}s", end='\r')
     except:
         error_logger.exception('exception has occurred in the main function...')
+        print(f"\n✗ CRITICAL ERROR in main function - check error.log")
 
 
 def pull_process_and_push_data(device, device_attendance_logs=None):
@@ -98,8 +139,26 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
         if not token:
             error_logger.error(f"Could not fetch BioTime token for device: {device['device_id']}")
             return
+
+        # Fetch registered terminals from Biotime
+        print(f"\n{'='*60}")
+        print(f"Fetching terminals for device: {device['device_id']}")
+        print(f"{'='*60}")
+        terminals = get_terminals_from_biotime(device['BASE_URL'], token)
+
+        # Store terminals in status for later validation
+        if terminals:
+            status.set(f"{device['device_id']}_terminals", json.dumps(terminals))
+            status.save()
+
         now = datetime.datetime.now()
         start_time = now - datetime.timedelta(days=3)
+
+        print(f"\n{'='*60}")
+        print(f"Fetching attendance from: {device['device_id']}")
+        print(f"Time range: {start_time} to {now}")
+        print(f"{'='*60}")
+
         device_attendance_logs = get_attendance_from_biotime(
             base_url=device['BASE_URL'],
             token=token,
@@ -110,6 +169,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
         status.set(f"{device['device_id']}_pull_timestamp", str(now))
         status.save()
         if not device_attendance_logs:
+            print(f"✗ No attendance logs found")
             return
 
     # Find the last successful push
@@ -137,6 +197,13 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 index_of_last = i
                 break
 
+    # Track terminals that reported in this batch
+    terminal_last_timestamps = {}
+
+    print(f"\n{'='*60}")
+    print(f"Processing {len(device_attendance_logs[index_of_last+1:])} new attendance records")
+    print(f"{'='*60}")
+
     for log in device_attendance_logs[index_of_last+1:]:
         punch_direction = device.get('punch_direction', 'AUTO')
         if punch_direction == 'AUTO':
@@ -146,12 +213,20 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 punch_direction = 'IN'
             else:
                 punch_direction = None
+
+        terminal_alias = log.get('terminal_alias', 'Unknown')
+
         erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], device['device_id'], punch_direction)
         if erpnext_status_code == 200:
+            # Track last timestamp for each terminal
+            if terminal_alias not in terminal_last_timestamps or log['timestamp'] > terminal_last_timestamps[terminal_alias]:
+                terminal_last_timestamps[terminal_alias] = log['timestamp']
+
             attendance_success_logger.info("\t".join([
                 erpnext_message, str(log['uid']),
                 str(log['user_id']), str(log['timestamp'].timestamp()),
                 str(log['punch']), str(log['status']),
+                terminal_alias,  # NEW: Include terminal alias
                 json.dumps(log, default=str)
             ]))
         else:
@@ -159,10 +234,20 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 str(erpnext_status_code), str(log['uid']),
                 str(log['user_id']), str(log['timestamp'].timestamp()),
                 str(log['punch']), str(log['status']),
+                terminal_alias,  # NEW: Include terminal alias
                 json.dumps(log, default=str)
             ]))
             if not any(error in erpnext_message for error in allowlisted_errors):
                 raise Exception('API Call to ERPNext Failed.')
+
+    # Update terminal last timestamps in status
+    for terminal_alias, last_timestamp in terminal_last_timestamps.items():
+        status.set(f"{terminal_alias}_last_attendance_timestamp", str(last_timestamp))
+        status.set(f"{terminal_alias}_last_checked", str(datetime.datetime.now()))
+        print(f"✓ Terminal '{terminal_alias}' last attendance: {last_timestamp}")
+
+    status.save()
+    print(f"✓ Successfully processed attendance for {len(terminal_last_timestamps)} terminals")
 
 def get_biotime_token(base_url, username, password):
     url = f"{base_url}/api-token-auth/"
@@ -176,6 +261,35 @@ def get_biotime_token(base_url, username, password):
     except Exception as e:
         error_logger.exception(f"Error getting BioTime token: {e}")
         return None
+
+def get_terminals_from_biotime(base_url, token):
+    """
+    Fetches list of all registered terminals/devices from Biotime.
+    Returns list of terminal aliases.
+    """
+    url = f"{base_url}/iclock/api/terminals/"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Token {token}"
+    }
+    try:
+        res = requests.get(url, headers=headers)
+        res.raise_for_status()
+        terminals_data = res.json().get("data", [])
+
+        # Extract terminal aliases
+        terminal_aliases = [t.get("alias", "") for t in terminals_data if t.get("alias")]
+
+        print(f"✓ Found {len(terminal_aliases)} registered terminals")
+        for alias in terminal_aliases:
+            print(f"  └─ {alias}")
+
+        info_logger.info(f"Fetched {len(terminal_aliases)} terminals: {', '.join(terminal_aliases)}")
+        return terminal_aliases
+    except Exception as e:
+        error_logger.exception(f"Error fetching terminals from Biotime: {e}")
+        print(f"✗ Error fetching terminals: {e}")
+        return []
 
 def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id=None):
     url = f"{base_url}/iclock/api/transactions/"
@@ -198,14 +312,27 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
         print("Status", res.status_code)
         res.raise_for_status()
         records = res.json().get("data", [])
-        print(f"found {len(records)} raw records")
+        print(f"✓ Found {len(records)} attendance records from Biotime")
+
         attendance_logs = [{
             "user_id": r["emp_code"],
             "uid": r["id"],
             "timestamp": datetime.datetime.strptime(r["punch_time"], "%Y-%m-%d %H:%M:%S"),
             "punch": int(r.get("punch_state", 0)),
-            "status" : 1
-        }for r in records]
+            "status": 1,
+            "terminal_alias": r.get("terminal_alias", "Unknown")  # NEW: Extract terminal alias
+        } for r in records]
+
+        # Log terminal distribution
+        if attendance_logs:
+            terminal_counts = {}
+            for log in attendance_logs:
+                terminal = log.get("terminal_alias", "Unknown")
+                terminal_counts[terminal] = terminal_counts.get(terminal, 0) + 1
+
+            print(f"  Attendance by Terminal:")
+            for terminal, count in terminal_counts.items():
+                print(f"    └─ {terminal}: {count} records")
         print(len(attendance_logs), "Attendance Logs ====================================")
         if attendance_logs:
             dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
@@ -291,37 +418,202 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
             error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
         return response.status_code, error_str
 
+def check_terminal_connectivity(device_id):
+    """
+    Checks if all expected terminals for a device have reported within the timeout period.
+    Returns (all_terminals_active, terminal_info)
+    """
+    TERMINAL_TIMEOUT = getattr(config, 'TERMINAL_TIMEOUT', 120)  # minutes
+    timeout_delta = datetime.timedelta(minutes=TERMINAL_TIMEOUT)
+
+    # Get expected terminals from config or from last fetch
+    expected_terminals_dict = getattr(config, 'expected_terminals', {})
+    expected_terminals = expected_terminals_dict.get(device_id, [])
+
+    # If not in config, get from status (auto-discovered terminals)
+    if not expected_terminals:
+        terminals_json = status.get(f"{device_id}_terminals")
+        if terminals_json:
+            try:
+                expected_terminals = json.loads(terminals_json)
+            except:
+                expected_terminals = []
+
+    if not expected_terminals:
+        # No terminals configured or discovered - warn but allow processing
+        print(f"⚠ Warning: No terminals configured for device '{device_id}'")
+        info_logger.warning(f"No terminals configured for device '{device_id}'")
+        return True, {}
+
+    print(f"\n{'='*60}")
+    print(f"Terminal Connectivity Check for device: {device_id}")
+    print(f"{'='*60}")
+    print(f"Expected terminals: {len(expected_terminals)}")
+
+    terminal_status = {}
+    all_active = True
+    now = datetime.datetime.now()
+
+    for terminal_alias in expected_terminals:
+        last_checked_str = status.get(f"{terminal_alias}_last_checked")
+        last_attendance_str = status.get(f"{terminal_alias}_last_attendance_timestamp")
+
+        if last_checked_str:
+            last_checked = _safe_convert_date(last_checked_str, "%Y-%m-%d %H:%M:%S.%f")
+            time_since_last = now - last_checked if last_checked else None
+
+            if time_since_last and time_since_last > timeout_delta:
+                # Terminal hasn't reported within timeout
+                all_active = False
+                terminal_status[terminal_alias] = {
+                    'active': False,
+                    'last_checked': last_checked,
+                    'time_since': time_since_last,
+                    'last_attendance': last_attendance_str
+                }
+                hours_ago = int(time_since_last.total_seconds() / 3600)
+                print(f"✗ {terminal_alias}: OFFLINE (last seen {hours_ago}h ago)")
+                error_logger.warning(f"Terminal '{terminal_alias}' not seen for {hours_ago} hours - may be offline")
+            else:
+                # Terminal is active
+                terminal_status[terminal_alias] = {
+                    'active': True,
+                    'last_checked': last_checked,
+                    'time_since': time_since_last,
+                    'last_attendance': last_attendance_str
+                }
+                minutes_ago = int(time_since_last.total_seconds() / 60) if time_since_last else 0
+                print(f"✓ {terminal_alias}: ACTIVE (last seen {minutes_ago}m ago)")
+        else:
+            # Never seen this terminal
+            all_active = False
+            terminal_status[terminal_alias] = {
+                'active': False,
+                'last_checked': None,
+                'time_since': None,
+                'last_attendance': None
+            }
+            print(f"✗ {terminal_alias}: NEVER SEEN")
+            error_logger.warning(f"Terminal '{terminal_alias}' has never reported attendance")
+
+    print(f"{'='*60}")
+    if all_active:
+        print(f"✓ All terminals ACTIVE - Safe to update shift type")
+        terminal_logger.info(f"Device '{device_id}': All {len(expected_terminals)} terminals active")
+    else:
+        inactive_count = sum(1 for t in terminal_status.values() if not t['active'])
+        print(f"✗ {inactive_count} terminals OFFLINE - Skipping shift type update")
+        inactive_terminals = [alias for alias, info in terminal_status.items() if not info['active']]
+        terminal_logger.warning(f"Device '{device_id}': {inactive_count} terminals offline: {', '.join(inactive_terminals)}")
+    print(f"{'='*60}\n")
+
+    # Log detailed status for each terminal
+    for terminal_alias, info in terminal_status.items():
+        status_str = "ACTIVE" if info['active'] else "OFFLINE"
+        last_checked = info['last_checked'].strftime('%Y-%m-%d %H:%M:%S') if info['last_checked'] else "Never"
+        terminal_logger.info(f"Terminal '{terminal_alias}': {status_str}, Last checked: {last_checked}")
+
+    return all_active, terminal_status
+
 def update_shift_last_sync_timestamp(shift_type_device_mapping):
     """
-    ### algo for updating the sync_current_timestamp
-    - get a list of devices to check
-    - check if all the devices have a non 'None' push_timestamp
-        - check if the earliest of the pull timestamp is greater than sync_current_timestamp for each shift name
-            - then update this min of pull timestamp to the shift
+    ### Enhanced algo for updating the sync_current_timestamp with terminal validation
+    - Get list of devices to check
+    - For each device, verify ALL terminals have reported (if require_all_terminals is True)
+    - Check if all devices have non 'None' push_timestamp
+    - Use the earliest terminal attendance timestamp across all devices
+    - Update shift if this timestamp is greater than current sync_timestamp
 
     """
+    print(f"\n{'='*60}")
+    print(f"SHIFT TYPE UPDATE VALIDATION")
+    print(f"{'='*60}")
+
     for shift_type_device_map in shift_type_device_mapping:
+        require_all_terminals = shift_type_device_map.get('require_all_terminals', True)
+
+        print(f"\nChecking shift type(s): {shift_type_device_map['shift_type_name']}")
+        print(f"Related devices: {shift_type_device_map['related_device_id']}")
+        print(f"Require all terminals: {require_all_terminals}")
+
         all_devices_pushed = True
-        pull_timestamp_array = []
+        all_terminals_active = True
+        terminal_timestamp_array = []
+
+        # Check each device
         for device_id in shift_type_device_map['related_device_id']:
+            # Check if device has pushed data
             if not status.get(f'{device_id}_push_timestamp'):
                 all_devices_pushed = False
+                print(f"✗ Device '{device_id}' has not pushed data yet")
                 break
-            pull_timestamp_array.append(_safe_convert_date(status.get(f'{device_id}_pull_timestamp'), "%Y-%m-%d %H:%M:%S.%f"))
-        if all_devices_pushed:
-            min_pull_timestamp = min(pull_timestamp_array)
-            if isinstance(shift_type_device_map['shift_type_name'], str): # for backward compatibility of config file
+
+            # Check terminal connectivity if required
+            if require_all_terminals:
+                terminals_active, terminal_info = check_terminal_connectivity(device_id)
+                if not terminals_active:
+                    all_terminals_active = False
+                    print(f"✗ Not all terminals active for device '{device_id}'")
+                    break
+
+            # Get all terminal timestamps for this device
+            terminals_json = status.get(f"{device_id}_terminals")
+            if terminals_json:
+                try:
+                    terminals = json.loads(terminals_json)
+                    for terminal_alias in terminals:
+                        last_attendance_str = status.get(f"{terminal_alias}_last_attendance_timestamp")
+                        if last_attendance_str:
+                            last_attendance = _safe_convert_date(last_attendance_str, "%Y-%m-%d %H:%M:%S.%f")
+                            if last_attendance:
+                                terminal_timestamp_array.append(last_attendance)
+                except:
+                    pass
+
+            # Fallback to device pull timestamp if no terminal timestamps available
+            if not terminal_timestamp_array:
+                device_pull_timestamp = _safe_convert_date(status.get(f'{device_id}_pull_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
+                if device_pull_timestamp:
+                    terminal_timestamp_array.append(device_pull_timestamp)
+
+        # Process shift type update if all conditions met
+        if all_devices_pushed and all_terminals_active and terminal_timestamp_array:
+            # Use the EARLIEST terminal timestamp to be conservative
+            min_terminal_timestamp = min(terminal_timestamp_array)
+            print(f"✓ All checks passed")
+            print(f"  Earliest terminal timestamp: {min_terminal_timestamp}")
+
+            if isinstance(shift_type_device_map['shift_type_name'], str):  # backward compatibility
                 shift_type_device_map['shift_type_name'] = [shift_type_device_map['shift_type_name']]
+
             for shift in shift_type_device_map['shift_type_name']:
                 try:
                     sync_current_timestamp = _safe_convert_date(status.get(f'{shift}_sync_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
-                    if (sync_current_timestamp and min_pull_timestamp > sync_current_timestamp) or (min_pull_timestamp and not sync_current_timestamp):
-                        response_code = send_shift_sync_to_erpnext(shift, min_pull_timestamp)
+                    print(f"  Current sync timestamp for '{shift}': {sync_current_timestamp}")
+
+                    if (sync_current_timestamp and min_terminal_timestamp > sync_current_timestamp) or (min_terminal_timestamp and not sync_current_timestamp):
+                        print(f"  → Updating shift type '{shift}' with timestamp: {min_terminal_timestamp}")
+                        response_code = send_shift_sync_to_erpnext(shift, min_terminal_timestamp)
                         if response_code == 200:
-                            status.set(f'{shift}_sync_timestamp', str(min_pull_timestamp))
+                            status.set(f'{shift}_sync_timestamp', str(min_terminal_timestamp))
                             status.save()
+                            print(f"  ✓ Successfully updated shift type '{shift}'")
+                        else:
+                            print(f"  ✗ Failed to update shift type '{shift}' (HTTP {response_code})")
+                    else:
+                        print(f"  ⊘ No update needed for '{shift}' (timestamp not newer)")
                 except:
                     error_logger.exception('Exception in update_shift_last_sync_timestamp, for shift:'+shift)
+                    print(f"  ✗ Exception updating shift '{shift}'")
+        else:
+            if not all_devices_pushed:
+                print(f"✗ Skipping shift type update: Not all devices have pushed data")
+            elif not all_terminals_active:
+                print(f"✗ Skipping shift type update: Not all terminals are active")
+            elif not terminal_timestamp_array:
+                print(f"✗ Skipping shift type update: No terminal timestamps available")
+
+    print(f"{'='*60}\n")
 
 def send_shift_sync_to_erpnext(shift_type_name, sync_timestamp):
     url = config.ERPNEXT_URL + "/api/resource/Shift Type/" + shift_type_name
@@ -407,6 +699,7 @@ if not os.path.exists(config.LOGS_DIRECTORY):
     os.makedirs(config.LOGS_DIRECTORY)
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
+terminal_logger = setup_logger('terminal_logger', '/'.join([config.LOGS_DIRECTORY, 'terminal_status.log']))
 status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
 
 def infinite_loop(sleep_time=15):

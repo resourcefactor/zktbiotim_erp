@@ -26,10 +26,25 @@ biotime_url = [
     {'BASE_URL':'http://127.0.0.1:8080', 'USERNAME': 'RfAdmin', 'PASSWORD': 'RfBioTime@2025', 'device_id': 'biotime'}
 ]
 
-# Configs updating sync timestamp in the Shift Type DocType 
+# Terminal connectivity settings
+# Minutes of silence before terminal considered offline
+TERMINAL_TIMEOUT = 120  # in minutes
+
+# Optional: Explicitly list expected terminals (terminal aliases) per device
+# If not specified, will auto-fetch from Biotime
+# Format: {'device_id': ['Terminal_Alias_1', 'Terminal_Alias_2']}
+expected_terminals = {
+    # 'biotime': ['Main Entrance', 'Back Door']  # Example - uncomment and configure as needed
+}
+
+# Configs updating sync timestamp in the Shift Type DocType
 # please, read this thread to know why this is necessary https://discuss.erpnext.com/t/v-12-hr-auto-attendance-purpose-of-last-sync-of-checkin-in-shift-type/52997
 shift_type_device_mapping = [
-    {'shift_type_name': ['Morning', 'Testing'], 'related_device_id': ['test']}
+    {
+        'shift_type_name': ['Morning', 'Testing'],
+        'related_device_id': ['test'],
+        'require_all_terminals': True  # Enforce all-terminals check before updating shift type
+    }
 ]
 
 

@@ -45,5 +45,85 @@ This guide helps you install and configure **ZKBioTime 9.0.3** and connect it wi
 4. Open your terminal, navigate to the script location, and run the following command:
 
    ```bash
-   python zk.py
+   python erpnext_sync.py
    ```
+
+---
+
+## ✅ Step 5: Multi-Terminal/Machine Configuration
+
+The system now supports **multiple biometric machines** with automatic connectivity detection. This ensures that shift types are only updated when **all configured terminals** have reported attendance.
+
+### Features:
+- ✅ **Automatic Terminal Discovery**: Fetches registered terminals from Biotime API
+- ✅ **Terminal Connectivity Monitoring**: Detects when terminals go offline
+- ✅ **Conservative Sync**: Only updates ERPNext shift types when all terminals are active
+- ✅ **Per-Terminal Tracking**: Tracks last attendance timestamp for each terminal
+- ✅ **Detailed Logging**: Separate terminal status log for monitoring
+
+### Configuration:
+
+#### 1. Terminal Timeout Setting
+```python
+# In local_config.py
+TERMINAL_TIMEOUT = 120  # Minutes before terminal considered offline
+```
+
+#### 2. Expected Terminals (Optional)
+You can explicitly list expected terminals per Biotime device:
+```python
+expected_terminals = {
+    'biotime': ['Main Entrance', 'Back Door', 'Loading Bay']
+}
+```
+If not configured, terminals will be **auto-discovered** from Biotime.
+
+#### 3. Shift Type Configuration
+Enable terminal validation in shift type mapping:
+```python
+shift_type_device_mapping = [
+    {
+        'shift_type_name': ['Morning', 'Testing'],
+        'related_device_id': ['biotime'],
+        'require_all_terminals': True  # Enforce all-terminals check
+    }
+]
+```
+
+### Monitoring:
+
+Check `logs/terminal_status.log` for terminal connectivity status:
+```
+2025-11-25 10:30:15  INFO  Device 'biotime': All 3 terminals active
+2025-11-25 10:30:15  INFO  Terminal 'Main Entrance': ACTIVE, Last checked: 2025-11-25 10:29:45
+2025-11-25 10:30:15  INFO  Terminal 'Back Door': ACTIVE, Last checked: 2025-11-25 10:28:12
+```
+
+### Console Output:
+The script provides **real-time visual feedback**:
+```
+============================================================
+Terminal Connectivity Check for device: biotime
+============================================================
+Expected terminals: 3
+✓ Main Entrance: ACTIVE (last seen 2m ago)
+✓ Back Door: ACTIVE (last seen 5m ago)
+✗ Loading Bay: OFFLINE (last seen 3h ago)
+============================================================
+✗ 1 terminals OFFLINE - Skipping shift type update
+============================================================
+```
+
+---
+
+## 📊 Logs
+
+The following logs are generated in the `logs/` directory:
+- `logs.log` - General info logs
+- `error.log` - Error logs
+- `terminal_status.log` - **NEW**: Terminal connectivity status
+- `attendance_success_log_<device_id>.log` - Successful attendance syncs (now includes terminal alias)
+- `attendance_failed_log_<device_id>.log` - Failed attendance syncs
+- `status.json` - System state and timestamps
+
+---
