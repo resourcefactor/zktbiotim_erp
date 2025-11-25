@@ -116,7 +116,7 @@ def main():
                 print(f"⏳ Waiting... Next sync in {int(time_until_next)}s", end='\r')
     except:
         error_logger.exception('exception has occurred in the main function...')
-        print(f"\n✗ CRITICAL ERROR in main function - check error.log")
+        print(f"\n✗ CRITICAL ERROR in main function - check logs/error.log")
 
 
 def pull_process_and_push_data(device, device_attendance_logs=None):
@@ -640,18 +640,25 @@ def get_last_line_from_file(file):
         # how will last line lookup work with log rotation when a new file is created?
             #- will that new file be empty at any time? or will it have a partial line from the previous file?
     line = None
-    if os.stat(file).st_size < 5000:
-        # quick hack to handle files with one line
-        with open(file, 'r') as f:
-            for line in f:
-                pass
-    else:
-        # optimized for large log files
-        with open(file, 'rb') as f:
-            f.seek(-2, os.SEEK_END)
-            while f.read(1) != b'\n':
-                f.seek(-2, os.SEEK_CUR)
-            line = f.readline().decode()
+    try:
+        if not os.path.exists(file):
+            return None
+        if os.stat(file).st_size == 0:
+            return None
+        if os.stat(file).st_size < 5000:
+            # quick hack to handle files with one line
+            with open(file, 'r') as f:
+                for line in f:
+                    pass
+        else:
+            # optimized for large log files
+            with open(file, 'rb') as f:
+                f.seek(-2, os.SEEK_END)
+                while f.read(1) != b'\n':
+                    f.seek(-2, os.SEEK_CUR)
+                line = f.readline().decode()
+    except:
+        return None
     return line
 
 
@@ -700,7 +707,7 @@ if not os.path.exists(config.LOGS_DIRECTORY):
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
 terminal_logger = setup_logger('terminal_logger', '/'.join([config.LOGS_DIRECTORY, 'terminal_status.log']))
-status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']))
+status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']), auto_dump=True)
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
