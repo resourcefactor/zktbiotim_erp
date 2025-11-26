@@ -8,7 +8,7 @@ import sys
 import time
 import logging
 from logging.handlers import RotatingFileHandler
-from pickledb import PickleDB
+import pickledb
 from zk import ZK, const
 
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
@@ -707,7 +707,7 @@ if not os.path.exists(config.LOGS_DIRECTORY):
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
 terminal_logger = setup_logger('terminal_logger', '/'.join([config.LOGS_DIRECTORY, 'terminal_status.log']))
-status = PickleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']), auto_dump=True)
+status = pickledb.load('/'.join([config.LOGS_DIRECTORY, 'status.json']), True)
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
