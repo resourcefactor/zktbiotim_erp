@@ -8,8 +8,42 @@ import sys
 import time
 import logging
 from logging.handlers import RotatingFileHandler
-import pickledb
 from zk import ZK, const
+
+# Simple JSON database class to replace pickledb
+class SimpleDB:
+    def __init__(self, location, auto_dump=True):
+        self.location = location
+        self.auto_dump = auto_dump
+        self.db = {}
+        self.load_data()
+
+    def load_data(self):
+        if os.path.exists(self.location):
+            try:
+                with open(self.location, 'r') as f:
+                    self.db = json.load(f)
+            except:
+                self.db = {}
+        else:
+            self.db = {}
+
+    def set(self, key, value):
+        self.db[key] = value
+        if self.auto_dump:
+            self.save()
+        return True
+
+    def get(self, key):
+        return self.db.get(key, None)
+
+    def save(self):
+        try:
+            with open(self.location, 'w') as f:
+                json.dump(self.db, f, indent=2)
+            return True
+        except:
+            return False
 
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "No Employee found for the given employee field value"
 EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactive Employee"
@@ -707,7 +741,7 @@ if not os.path.exists(config.LOGS_DIRECTORY):
 error_logger = setup_logger('error_logger', '/'.join([config.LOGS_DIRECTORY, 'error.log']), logging.ERROR)
 info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs.log']))
 terminal_logger = setup_logger('terminal_logger', '/'.join([config.LOGS_DIRECTORY, 'terminal_status.log']))
-status = pickledb.load('/'.join([config.LOGS_DIRECTORY, 'status.json']), True)
+status = SimpleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']), auto_dump=True)
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
