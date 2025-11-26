@@ -343,62 +343,88 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
         "Authorization": f"Token {token}"
     }
     print(headers, "===================================")
-    params = {
-        "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "page": 1,
-        "page_size": 100
-    }
-    try:
-        print("Url", url)
-        print("Params", params)
-        res = requests.get(url, headers=headers, params=params)
-        print(res.url,"reponse")
-        print("Status", res.status_code)
-        res.raise_for_status()
-        records = res.json().get("data", [])
-        print(f"✓ Found {len(records)} attendance records from Biotime")
 
-        attendance_logs = [{
-            "user_id": r["emp_code"],
-            "uid": r["id"],
-            "timestamp": datetime.datetime.strptime(r["punch_time"], "%Y-%m-%d %H:%M:%S"),
-            "punch": int(r.get("punch_state", 0)),
-            "status": 1,
-            "terminal_alias": r.get("terminal_alias", "Unknown")  # NEW: Extract terminal alias
-        } for r in records]
+    all_attendance_logs = []
+    page = 1
+    page_size = 100
+
+    while True:
+        params = {
+            "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "page": page,
+            "page_size": page_size
+        }
+
+        try:
+            print(f"Fetching page {page}...")
+            print("Url", url)
+            print("Params", params)
+            res = requests.get(url, headers=headers, params=params)
+            print(res.url,"reponse")
+            print("Status", res.status_code)
+            res.raise_for_status()
+
+            response_data = res.json()
+            records = response_data.get("data", [])
+
+            if not records:
+                print(f"  No more records on page {page}")
+                break
+
+            print(f"  ✓ Found {len(records)} records on page {page}")
+
+            # Convert records to attendance logs
+            page_logs = [{
+                "user_id": r["emp_code"],
+                "uid": r["id"],
+                "timestamp": datetime.datetime.strptime(r["punch_time"], "%Y-%m-%d %H:%M:%S"),
+                "punch": int(r.get("punch_state", 0)),
+                "status": 1,
+                "terminal_alias": r.get("terminal_alias", "Unknown")
+            } for r in records]
+
+            all_attendance_logs.extend(page_logs)
+
+            # Check if there are more pages
+            total_count = response_data.get("count", 0)
+            fetched_count = page * page_size
+
+            if len(records) < page_size or fetched_count >= total_count:
+                print(f"  All pages fetched (total records: {len(all_attendance_logs)})")
+                break
+
+            page += 1
+
+        except Exception as e:
+            error_logger.exception(f"Error fetching attendance from biotime on page {page}: {e}")
+            break
+
+    if all_attendance_logs:
+        print(f"\n✓ Total: {len(all_attendance_logs)} attendance records from Biotime (across {page} page(s))")
 
         # Log terminal distribution
-        if attendance_logs:
-            terminal_counts = {}
-            for log in attendance_logs:
-                terminal = log.get("terminal_alias", "Unknown")
-                terminal_counts[terminal] = terminal_counts.get(terminal, 0) + 1
+        terminal_counts = {}
+        for log in all_attendance_logs:
+            terminal = log.get("terminal_alias", "Unknown")
+            terminal_counts[terminal] = terminal_counts.get(terminal, 0) + 1
 
-            print(f"  Attendance by Terminal:")
-            for terminal, count in terminal_counts.items():
-                print(f"    └─ {terminal}: {count} records")
-        print(len(attendance_logs), "Attendance Logs ====================================")
-        if attendance_logs:
-            dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
-            print((f"Writing dump to: {dump_file_name}"))
+        print(f"  Attendance by Terminal:")
+        for terminal, count in terminal_counts.items():
+            print(f"    └─ {terminal}: {count} records")
 
-            try:
-                print("===================================")
-                with open(dump_file_name, 'w+') as f:
-                    print("================ffffffffffffffffffffffffffff")
-                    # f.write(json.dumps(list(map(lambda x: x.__dict__, attendances)), default=datetime.datetime.timestamp))
-                    f.write(json.dumps(attendance_logs, default=datetime.datetime.timestamp))
-           
-                # with open(dump_file_name, 'w+') as f:
-                #     f.write(json.dumps(attendance_logs, default=datetime.datetime.timestamp))
-                print("Dump file written successfully")
-            except Exception as e:
-                print("Error on creating dump file")
-        return attendance_logs
-    except Exception as e:
-        error_logger.exception(f"Error fetching attendance from biotome: {e}")
-        return []
+        # Save dump file
+        dump_file_name = get_dump_file_name_and_directory(device_id, "biotime")
+        print(f"Writing dump to: {dump_file_name}")
+
+        try:
+            with open(dump_file_name, 'w+') as f:
+                f.write(json.dumps(all_attendance_logs, default=datetime.datetime.timestamp))
+            print("Dump file written successfully")
+        except Exception as e:
+            error_logger.exception(f"Error writing dump file: {e}")
+
+    return all_attendance_logs
 
 def get_all_attendance_from_device(ip, port=4370, timeout=30, device_id=None, clear_from_device_on_fetch=False):
     #  Sample Attendance Logs [{'punch': 255, 'user_id': '22', 'uid': 12349, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 29)},{'punch': 255, 'user_id': '7', 'uid': 7, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 36)}]
