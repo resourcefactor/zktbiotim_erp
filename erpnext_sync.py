@@ -211,15 +211,24 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     last_line = get_last_line_from_file('/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
     if last_line:
         try:
-            last_user_id, last_timestamp = last_line.split("\t")[4:6]
-            last_timestamp = datetime.datetime.fromtimestamp(float(last_timestamp))
-        except Exception:
+            parts = last_line.split("\t")
+            print(f"Debug: Last log line has {len(parts)} parts")
+            if len(parts) >= 6:
+                last_user_id, last_timestamp = parts[4:6]
+                last_timestamp = datetime.datetime.fromtimestamp(float(last_timestamp))
+                print(f"Debug: Last processed - User: {last_user_id}, Time: {last_timestamp}")
+            else:
+                print(f"⚠ Warning: Log line format unexpected")
+                last_user_id, last_timestamp = None, None
+        except Exception as e:
+            print(f"⚠ Warning: Error parsing last line: {e}")
             last_user_id, last_timestamp = None, None
         if last_timestamp and import_start_date and last_timestamp < import_start_date:
             last_timestamp = import_start_date
             last_user_id = None
     else:
         last_user_id, last_timestamp = None, import_start_date
+        print(f"Debug: No previous attendance log found, starting from: {import_start_date}")
 
     for i, log in enumerate(device_attendance_logs):
         if last_user_id and last_timestamp:
@@ -275,13 +284,15 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
                 raise Exception('API Call to ERPNext Failed.')
 
     # Update terminal last timestamps in status
-    for terminal_alias, last_timestamp in terminal_last_timestamps.items():
-        status.set(f"{terminal_alias}_last_attendance_timestamp", str(last_timestamp))
-        status.set(f"{terminal_alias}_last_checked", str(datetime.datetime.now()))
-        print(f"✓ Terminal '{terminal_alias}' last attendance: {last_timestamp}")
-
-    status.save()
-    print(f"✓ Successfully processed attendance for {len(terminal_last_timestamps)} terminals")
+    if terminal_last_timestamps:
+        for terminal_alias, last_timestamp in terminal_last_timestamps.items():
+            status.set(f"{terminal_alias}_last_attendance_timestamp", str(last_timestamp))
+            status.set(f"{terminal_alias}_last_checked", str(datetime.datetime.now()))
+            print(f"✓ Terminal '{terminal_alias}' last attendance: {last_timestamp}")
+        status.save()
+        print(f"✓ Successfully processed attendance for {len(terminal_last_timestamps)} terminals")
+    else:
+        print(f"⚠ Warning: No terminal timestamps collected")
 
 def get_biotime_token(base_url, username, password):
     url = f"{base_url}/api-token-auth/"
