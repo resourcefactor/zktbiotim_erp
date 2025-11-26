@@ -730,10 +730,21 @@ def _apply_function_to_key(obj, key, fn):
     return obj
 
 def _safe_convert_date(datestring, pattern):
+    """
+    Safely convert date string to datetime, trying multiple formats.
+    """
+    if not datestring:
+        return None
     try:
+        # Try with microseconds first
         return datetime.datetime.strptime(datestring, pattern)
     except:
-        return None
+        # If it fails, try without microseconds
+        try:
+            pattern_no_micro = pattern.replace('.%f', '')
+            return datetime.datetime.strptime(datestring, pattern_no_micro)
+        except:
+            return None
 
 def _safe_get_error_str(res):
     try:
