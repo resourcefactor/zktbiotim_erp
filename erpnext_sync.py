@@ -257,7 +257,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
             else:
                 punch_direction = None
 
-        terminal_alias = log.get('terminal_alias', 'Unknown')
+        terminal_alias = log.get('terminal_alias') or 'Unknown'
 
         erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], device['device_id'], punch_direction)
         if erpnext_status_code == 200:
@@ -627,25 +627,26 @@ def update_shift_last_sync_timestamp(shift_type_device_mapping):
                     print(f"✗ Not all terminals active for device '{device_id}'")
                     break
 
-            # Get all terminal timestamps for this device
-            terminals_json = status.get(f"{device_id}_terminals")
-            if terminals_json:
-                try:
-                    terminals = json.loads(terminals_json)
-                    for terminal_alias in terminals:
-                        last_attendance_str = status.get(f"{terminal_alias}_last_attendance_timestamp")
-                        if last_attendance_str:
-                            last_attendance = _safe_convert_date(last_attendance_str, "%Y-%m-%d %H:%M:%S.%f")
-                            if last_attendance:
-                                terminal_timestamp_array.append(last_attendance)
-                except:
-                    pass
+            # Get terminal list: prefer config's expected_terminals, fall back to auto-discovered
+            expected_terminals_dict = getattr(config, 'expected_terminals', {})
+            terminals = expected_terminals_dict.get(device_id, [])
+            if not terminals:
+                terminals_json = status.get(f"{device_id}_terminals")
+                if terminals_json:
+                    try:
+                        terminals = json.loads(terminals_json)
+                    except:
+                        terminals = []
 
-            # Fallback to device pull timestamp if no terminal timestamps available
-            if not terminal_timestamp_array:
-                device_pull_timestamp = _safe_convert_date(status.get(f'{device_id}_pull_timestamp'), "%Y-%m-%d %H:%M:%S.%f")
-                if device_pull_timestamp:
-                    terminal_timestamp_array.append(device_pull_timestamp)
+            for terminal_alias in terminals:
+                last_attendance_str = status.get(f"{terminal_alias}_last_attendance_timestamp")
+                if last_attendance_str:
+                    last_attendance = _safe_convert_date(last_attendance_str, "%Y-%m-%d %H:%M:%S.%f")
+                    if last_attendance:
+                        terminal_timestamp_array.append(last_attendance)
+
+            # Note: No fallback to pull_timestamp - it's a system clock time, not an
+            # attendance time, and using it would set sync_timestamp ahead of real data.
 
         # Process shift type update if all conditions met
         if all_devices_pushed and all_terminals_active and terminal_timestamp_array:
