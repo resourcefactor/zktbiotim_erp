@@ -7,8 +7,16 @@ import os
 import sys
 import time
 import logging
+import signal
 from logging.handlers import RotatingFileHandler
 from zk import ZK, const
+
+def _handle_shutdown(signum, frame):
+    print("\n\nShutdown signal received. Exiting gracefully...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, _handle_shutdown)   # Ctrl+C
+signal.signal(signal.SIGTERM, _handle_shutdown)  # kill / systemctl stop
 
 # Simple JSON database class to replace pickledb
 class SimpleDB:
@@ -796,11 +804,14 @@ status = SimpleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']), auto_dump=Tr
 
 def infinite_loop(sleep_time=15):
     print("Service Running...")
+    print("Press Ctrl+C to stop.")
     while True:
         try:
             main()
             time.sleep(sleep_time)
-        except BaseException as e:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
             print(e)
 
 if __name__ == "__main__":
