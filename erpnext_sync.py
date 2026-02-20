@@ -43,6 +43,7 @@ class SimpleDB:
         return True
 
     def get(self, key):
+        self.load_data()
         return self.db.get(key, None)
 
     def save(self):
