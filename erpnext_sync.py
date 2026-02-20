@@ -186,7 +186,9 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
             status.save()
 
         now = datetime.datetime.now()
-        start_time = now - datetime.timedelta(days=3)
+        # Use last pull timestamp as start, falling back to IMPORT_START_DATE on first run.
+        # To trigger a backfill: set IMPORT_START_DATE and delete {device_id}_pull_timestamp from status.json
+        start_time = last_sync
 
         print(f"\n{'='*60}")
         print(f"Fetching attendance from: {device['device_id']}")
