@@ -270,7 +270,7 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
 
         terminal_alias = log.get('terminal_alias') or 'Unknown'
 
-        erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], device['device_id'], punch_direction)
+        erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], terminal_alias, punch_direction)
         if erpnext_status_code == 200:
             # Track last timestamp for each terminal
             if terminal_alias not in terminal_last_timestamps or log['timestamp'] > terminal_last_timestamps[terminal_alias]:
