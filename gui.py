@@ -114,23 +114,28 @@ class BiometricWindow(QMainWindow):
             self.textbox_erpnext_url.setText(config.ERPNEXT_URL)
             self.textbox_pull_frequency.setText(str(config.PULL_FREQUENCY))
 
-            if len(config.devices):
-                self.device_id_0.setText(config.devices[0]['device_id'])
-                self.device_ip_0.setText(config.devices[0]['ip'])
-                self.shift_0.setText(
-                    config.shift_type_device_mapping[0]['shift_type_name'])
+            devices = getattr(config, 'devices', [])
+            shift_type_device_mapping = getattr(config, 'shift_type_device_mapping', [])
 
-            if len(config.devices) > 1:
-                for _ in range(self.counter, len(config.devices) - 1):
+            if len(devices):
+                self.device_id_0.setText(devices[0]['device_id'])
+                self.device_ip_0.setText(devices[0]['ip'])
+                if len(shift_type_device_mapping):
+                    self.shift_0.setText(
+                        shift_type_device_mapping[0]['shift_type_name'])
+
+            if len(devices) > 1:
+                for _ in range(self.counter, len(devices) - 1):
                     self.add_devices_fields()
 
                     device = getattr(self, 'device_id_' + str(self.counter))
                     ip = getattr(self, 'device_ip_' + str(self.counter))
                     shift = getattr(self, 'shift_' + str(self.counter))
 
-                    device.setText(config.devices[self.counter]['device_id'])
-                    ip.setText(config.devices[self.counter]['ip'])
-                    shift.setText(config.shift_type_device_mapping[self.counter]['shift_type_name'])
+                    device.setText(devices[self.counter]['device_id'])
+                    ip.setText(devices[self.counter]['ip'])
+                    if self.counter < len(shift_type_device_mapping):
+                        shift.setText(shift_type_device_mapping[self.counter]['shift_type_name'])
         else:
             self.textbox_erpnext_api_secret.setPlaceholderText("c70ee57c7b3124c")
             self.textbox_erpnext_api_key.setPlaceholderText("fb37y8fd4uh8ac")
