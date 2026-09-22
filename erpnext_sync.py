@@ -162,6 +162,49 @@ def main():
         print(f"\n✗ CRITICAL ERROR in main function - check logs/error.log")
 
 
+def push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps):
+    """
+    Pushes a single attendance record to ERPNext and logs the outcome.
+    Returns True if the record is settled (pushed, or failed with an allowlisted
+    error that should not be retried again), False if it should remain pending retry.
+    Raises on a non-allowlisted failure, matching the existing halt-on-unknown-error behavior.
+    """
+    punch_direction = device.get('punch_direction', 'AUTO')
+    if punch_direction == 'AUTO':
+        if log['punch'] in device_punch_values_OUT:
+            punch_direction = 'OUT'
+        elif log['punch'] in device_punch_values_IN:
+            punch_direction = 'IN'
+        else:
+            punch_direction = None
+
+    terminal_alias = log.get('terminal_alias') or 'Unknown'
+
+    erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], terminal_alias, punch_direction)
+    if erpnext_status_code == 200:
+        if terminal_alias not in terminal_last_timestamps or log['timestamp'] > terminal_last_timestamps[terminal_alias]:
+            terminal_last_timestamps[terminal_alias] = log['timestamp']
+
+        attendance_success_logger.info("\t".join([
+            erpnext_message, str(log['uid']),
+            str(log['user_id']), str(log['timestamp'].timestamp()),
+            str(log['punch']), str(log['status']),
+            terminal_alias,
+            json.dumps(log, default=str)
+        ]))
+        return True
+    else:
+        attendance_failed_logger.error("\t".join([
+            str(erpnext_status_code), str(log['uid']),
+            str(log['user_id']), str(log['timestamp'].timestamp()),
+            str(log['punch']), str(log['status']),
+            terminal_alias,
+            json.dumps(log, default=str)
+        ]))
+        if not any(error in erpnext_message for error in allowlisted_errors):
+            raise Exception('API Call to ERPNext Failed.')
+        return False
+
 def pull_process_and_push_data(device, device_attendance_logs=None):
     """
     Handles pushing attendance logs to ERPNext from either BioTime or ZKTeco.
@@ -170,6 +213,27 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
     attendance_success_logger = setup_logger(attendance_success_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
     attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log')
+
+    terminal_last_timestamps = {}
+
+    # Retry any records that previously failed with an allowlisted error (e.g. employee
+    # mapping not yet configured in ERPNext). Once the mapping is fixed, this picks them
+    # back up automatically on the next cycle instead of losing them silently.
+    pending_records = load_pending_retry_records(device['device_id'])
+    if pending_records:
+        print(f"\n{'='*60}")
+        print(f"Retrying {len(pending_records)} previously-failed record(s) for device: {device['device_id']}")
+        print(f"{'='*60}")
+        still_pending = []
+        retried_ok = 0
+        for log in pending_records:
+            settled = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
+            if settled:
+                retried_ok += 1
+            else:
+                still_pending.append(log)
+        save_pending_retry_records(device['device_id'], still_pending)
+        print(f"✓ {retried_ok} retried record(s) succeeded, {len(still_pending)} still pending")
 
     # Determine start time
     import_start_date = _safe_convert_date(config.IMPORT_START_DATE, "%Y%m%d")
@@ -211,6 +275,9 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
             end_time=now,
             device_id=device['device_id']
         )
+        # Only advance the pull watermark once the fetch has completed in full -
+        # a partial/failed fetch (get_attendance_from_biotime now raises instead of
+        # silently truncating) must not move the window past unfetched records.
         status.set(f"{device['device_id']}_pull_timestamp", str(now))
         status.save()
         if not device_attendance_logs:
@@ -241,58 +308,40 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
         last_user_id, last_timestamp = None, import_start_date
         print(f"Debug: No previous attendance log found, starting from: {import_start_date}")
 
+    index_of_last_by_timestamp = -1
     for i, log in enumerate(device_attendance_logs):
         if last_user_id and last_timestamp:
             if last_user_id == str(log['user_id']) and last_timestamp == log['timestamp']:
                 index_of_last = i
                 break
+            if index_of_last_by_timestamp == -1 and log['timestamp'] >= last_timestamp:
+                index_of_last_by_timestamp = i
         elif last_timestamp:
             if log['timestamp'] >= last_timestamp:
                 index_of_last = i
                 break
 
-    # Track terminals that reported in this batch
-    terminal_last_timestamps = {}
+    if index_of_last == -1 and last_user_id and last_timestamp and index_of_last_by_timestamp != -1:
+        # The last-synced record has aged out of the current pull window (e.g. after
+        # a long gap). Fall back to a timestamp-only resume point instead of replaying
+        # the entire batch, which would otherwise flood ERPNext with duplicate-checkin errors.
+        print(f"⚠ Warning: Last synced record not found in current window, falling back to timestamp match")
+        index_of_last = index_of_last_by_timestamp - 1
 
     print(f"\n{'='*60}")
     print(f"Processing {len(device_attendance_logs[index_of_last+1:])} new attendance records")
     print(f"{'='*60}")
 
+    newly_failed_records = []
     for log in device_attendance_logs[index_of_last+1:]:
-        punch_direction = device.get('punch_direction', 'AUTO')
-        if punch_direction == 'AUTO':
-            if log['punch'] in device_punch_values_OUT:
-                punch_direction = 'OUT'
-            elif log['punch'] in device_punch_values_IN:
-                punch_direction = 'IN'
-            else:
-                punch_direction = None
+        settled = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
+        if not settled:
+            newly_failed_records.append(log)
 
-        terminal_alias = log.get('terminal_alias') or 'Unknown'
-
-        erpnext_status_code, erpnext_message = send_to_erpnext(log['user_id'], log['timestamp'], terminal_alias, punch_direction)
-        if erpnext_status_code == 200:
-            # Track last timestamp for each terminal
-            if terminal_alias not in terminal_last_timestamps or log['timestamp'] > terminal_last_timestamps[terminal_alias]:
-                terminal_last_timestamps[terminal_alias] = log['timestamp']
-
-            attendance_success_logger.info("\t".join([
-                erpnext_message, str(log['uid']),
-                str(log['user_id']), str(log['timestamp'].timestamp()),
-                str(log['punch']), str(log['status']),
-                terminal_alias,  # NEW: Include terminal alias
-                json.dumps(log, default=str)
-            ]))
-        else:
-            attendance_failed_logger.error("\t".join([
-                str(erpnext_status_code), str(log['uid']),
-                str(log['user_id']), str(log['timestamp'].timestamp()),
-                str(log['punch']), str(log['status']),
-                terminal_alias,  # NEW: Include terminal alias
-                json.dumps(log, default=str)
-            ]))
-            if not any(error in erpnext_message for error in allowlisted_errors):
-                raise Exception('API Call to ERPNext Failed.')
+    if newly_failed_records:
+        existing_pending = load_pending_retry_records(device['device_id'])
+        save_pending_retry_records(device['device_id'], existing_pending + newly_failed_records)
+        print(f"⚠ {len(newly_failed_records)} record(s) queued for retry (see {get_pending_retry_file_name(device['device_id'])})")
 
     # Update terminal last timestamps in status
     if terminal_last_timestamps:
@@ -409,7 +458,7 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
 
         except Exception as e:
             error_logger.exception(f"Error fetching attendance from biotime on page {page}: {e}")
-            break
+            raise
 
     if all_attendance_logs:
         print(f"\n✓ Total: {len(all_attendance_logs)} attendance records from Biotime (across {page} page(s))")
@@ -762,6 +811,33 @@ def setup_logger(name, log_file, level=logging.INFO, formatter=None):
 
 def get_dump_file_name_and_directory(device_id, device_ip):
     return config.LOGS_DIRECTORY + '/' + device_id + "_" + device_ip.replace('.', '_') + '_last_fetch_dump.json'
+
+def get_pending_retry_file_name(device_id):
+    return config.LOGS_DIRECTORY + '/' + device_id + '_pending_retry.json'
+
+def load_pending_retry_records(device_id):
+    pending_file = get_pending_retry_file_name(device_id)
+    if not os.path.exists(pending_file):
+        return []
+    try:
+        with open(pending_file, 'r') as f:
+            records = json.load(f)
+        return [_apply_function_to_key(r, 'timestamp', datetime.datetime.fromtimestamp) for r in records]
+    except Exception as e:
+        error_logger.exception(f"Error loading pending retry file {pending_file}: {e}")
+        return []
+
+def save_pending_retry_records(device_id, records):
+    pending_file = get_pending_retry_file_name(device_id)
+    try:
+        if not records:
+            if os.path.exists(pending_file):
+                os.remove(pending_file)
+            return
+        with open(pending_file, 'w') as f:
+            f.write(json.dumps(records, default=datetime.datetime.timestamp))
+    except Exception as e:
+        error_logger.exception(f"Error saving pending retry file {pending_file}: {e}")
 
 def _apply_function_to_key(obj, key, fn):
     obj[key] = fn(obj[key])
