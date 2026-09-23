@@ -1,8 +1,8 @@
 
 # ERPNext related configs
-ERPNEXT_API_KEY = '3623427389736fc'
-ERPNEXT_API_SECRET = '17e1e4897032ac7'
-ERPNEXT_URL = 'https://asma.erprf.com'
+ERPNEXT_API_KEY = '362342738973asdf6fc'
+ERPNEXT_API_SECRET = '17e1e4897032ac7asdf'
+ERPNEXT_URL = 'https://address.erpnext.com'
 ERPNEXT_VERSION = 16
 
 
@@ -21,7 +21,7 @@ IMPORT_START_DATE = '20260824' # format: '20190501'
 
 
 biotime_url = [
-    {'BASE_URL':'http://192.168.0.103:8081', 'USERNAME': 'attendance', 'PASSWORD': 'MrMsAt@2026', 'device_id': 'biotime'}
+    {'BASE_URL':'http://192.168.0.103:8081', 'USERNAME': 'attendance', 'PASSWORD': 'password', 'device_id': 'biotime'}
 ]
 
 # Terminal connectivity settings
