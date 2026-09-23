@@ -17,6 +17,7 @@ config_template = '''# ERPNext related configs
 ERPNEXT_API_KEY = '{0}'
 ERPNEXT_API_SECRET = '{1}'
 ERPNEXT_URL = '{2}'
+ERPNEXT_VERSION = 15
 
 
 # operational configs
@@ -24,23 +25,38 @@ PULL_FREQUENCY = {3} or 60 # in minutes
 LOGS_DIRECTORY = 'logs' # logs of this script is stored in this directory
 IMPORT_START_DATE = '{4}' or None # format: '20190501'
 
-# Biometric device configs (all keys mandatory)
+# ZKBioTime server configs (all keys mandatory)
+    #- BASE_URL - ZKBioTime server base URL, e.g. 'http://127.0.0.1:8080'
+    #- USERNAME - ZKBioTime login username
+    #- PASSWORD - ZKBioTime login password
     #- device_id - must be unique, strictly alphanumerical chars only. no space allowed.
-    #- ip - device IP Address
-    #- punch_direction - 'IN'/'OUT'/'AUTO'/None
-    #- clear_from_device_on_fetch: if set to true then attendance is deleted after fetch is successful.
-    #(Caution: this feature can lead to data loss if used carelessly.)
-devices = {5}
+biotime_url = {5}
+
+# Terminal connectivity settings
+# Minutes of silence before terminal considered offline
+TERMINAL_TIMEOUT = 120  # in minutes
+
+# Optional: Explicitly list expected terminals (terminal aliases) per device
+# If not specified, will auto-fetch from Biotime
+# Format: {{'device_id': ['Terminal_Alias_1', 'Terminal_Alias_2']}}
+expected_terminals = {{}}
 
 # Configs updating sync timestamp in the Shift Type DocType
 shift_type_device_mapping = {6}
+
+# Ignore following exceptions thrown by ERPNext and continue importing punch logs.
+# Note: All other exceptions will halt the punch log import to erpnext.
+#       1. No Employee found for the given employee User ID in the Biometric device.
+#       2. Employee is inactive for the given employee User ID in the Biometric device.
+#       3. Duplicate Employee Checkin found. (This exception can happen if you have cleared the logs/status.json of this script)
+# Use the corresponding number to ignore the above exceptions. (Default: Ignores all the listed exceptions)
+allowed_exceptions = [1,2,3]
 '''
 
 
 class BiometricWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.reg_exp_for_ip = r"((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?=\s*netmask)"
         self.init_ui()
 
     def closeEvent(self, event):
@@ -60,7 +76,7 @@ class BiometricWindow(QMainWindow):
 
     def setup_window(self):
         self.setFixedSize(470, 550)
-        self.setWindowTitle('ERPNext Biometric Service')
+        self.setWindowTitle('ERPNext ZKBioTime Service')
 
     def setup_textboxes_and_label(self):
 
@@ -87,14 +103,18 @@ class BiometricWindow(QMainWindow):
         self.create_button('-', 'remove', 420, 230, 35, 30, self.remove_devices_fields)
 
         self.create_label("Device ID", "device_id", 20, 260, 0, 30)
-        self.create_label("Device IP", "device_ip", 170, 260, 0, 30)
-        self.create_label("Shift", "shift", 320, 260, 0, 0)
+        self.create_label("BioTime Base URL", "biotime_base_url", 170, 260, 0, 30)
+        self.create_label("Username", "biotime_username", 320, 260, 0, 0)
 
         # First Row for table
-        self.create_field("device_id_0", 20, 290, 145, 30)
-        self.create_field("device_ip_0", 165, 290, 145, 30)
-        self.validate_data(self.reg_exp_for_ip, "device_ip_0")
-        self.create_field("shift_0", 310, 290, 145, 30)
+        self.create_field("device_id_0", 20, 290, 100, 30)
+        self.create_field("biotime_base_url_0", 125, 290, 145, 30)
+        self.create_field("biotime_username_0", 275, 290, 90, 30)
+        self.create_field("biotime_password_0", 20, 325, 145, 30)
+        self.biotime_password_0.setPlaceholderText("Password")
+        self.biotime_password_0.setEchoMode(QLineEdit.Password)
+        self.create_label("Shift", "shift", 170, 325, 0, 0)
+        self.create_field("shift_0", 210, 325, 155, 30)
 
         # Actions buttons
         self.create_button('Set Configuration', 'set_conf', 20, 500, 130, 30, self.setup_local_config)
@@ -114,33 +134,47 @@ class BiometricWindow(QMainWindow):
             self.textbox_erpnext_url.setText(config.ERPNEXT_URL)
             self.textbox_pull_frequency.setText(str(config.PULL_FREQUENCY))
 
-            devices = getattr(config, 'devices', [])
+            biotime_url = getattr(config, 'biotime_url', [])
             shift_type_device_mapping = getattr(config, 'shift_type_device_mapping', [])
 
-            if len(devices):
-                self.device_id_0.setText(devices[0]['device_id'])
-                self.device_ip_0.setText(devices[0]['ip'])
+            if len(biotime_url):
+                self.device_id_0.setText(biotime_url[0]['device_id'])
+                self.biotime_base_url_0.setText(biotime_url[0]['BASE_URL'])
+                self.biotime_username_0.setText(biotime_url[0]['USERNAME'])
+                self.biotime_password_0.setText(biotime_url[0]['PASSWORD'])
                 if len(shift_type_device_mapping):
-                    self.shift_0.setText(
-                        shift_type_device_mapping[0]['shift_type_name'])
+                    shift_name = shift_type_device_mapping[0]['shift_type_name']
+                    if isinstance(shift_name, list):
+                        shift_name = ','.join(shift_name)
+                    self.shift_0.setText(shift_name)
 
-            if len(devices) > 1:
-                for _ in range(self.counter, len(devices) - 1):
+            if len(biotime_url) > 1:
+                for _ in range(self.counter, len(biotime_url) - 1):
                     self.add_devices_fields()
 
                     device = getattr(self, 'device_id_' + str(self.counter))
-                    ip = getattr(self, 'device_ip_' + str(self.counter))
+                    base_url = getattr(self, 'biotime_base_url_' + str(self.counter))
+                    username = getattr(self, 'biotime_username_' + str(self.counter))
+                    password = getattr(self, 'biotime_password_' + str(self.counter))
                     shift = getattr(self, 'shift_' + str(self.counter))
 
-                    device.setText(devices[self.counter]['device_id'])
-                    ip.setText(devices[self.counter]['ip'])
+                    device.setText(biotime_url[self.counter]['device_id'])
+                    base_url.setText(biotime_url[self.counter]['BASE_URL'])
+                    username.setText(biotime_url[self.counter]['USERNAME'])
+                    password.setText(biotime_url[self.counter]['PASSWORD'])
                     if self.counter < len(shift_type_device_mapping):
-                        shift.setText(shift_type_device_mapping[self.counter]['shift_type_name'])
+                        shift_name = shift_type_device_mapping[self.counter]['shift_type_name']
+                        if isinstance(shift_name, list):
+                            shift_name = ','.join(shift_name)
+                        shift.setText(shift_name)
         else:
             self.textbox_erpnext_api_secret.setPlaceholderText("c70ee57c7b3124c")
             self.textbox_erpnext_api_key.setPlaceholderText("fb37y8fd4uh8ac")
             self.textbox_erpnext_url.setPlaceholderText("example.erpnext.com")
             self.textbox_pull_frequency.setPlaceholderText("60")
+            self.device_id_0.setPlaceholderText("biotime")
+            self.biotime_base_url_0.setPlaceholderText("http://127.0.0.1:8080")
+            self.biotime_username_0.setPlaceholderText("Username")
 
         self.textbox_import_start_date.setPlaceholderText("DD/MM/YYYY")
 
@@ -187,10 +221,15 @@ class BiometricWindow(QMainWindow):
     def add_devices_fields(self):
         if self.counter < 5:
             self.counter += 1
-            self.create_field("device_id_" + str(self.counter), 20, 290+(self.counter * 30), 145, 30)
-            self.create_field("device_ip_" + str(self.counter), 165, 290+(self.counter * 30), 145, 30)
-            self.validate_data(self.reg_exp_for_ip, "device_ip_" + str(self.counter))
-            self.create_field("shift_" + str(self.counter), 310, 290+(self.counter * 30), 145, 30)
+            row_y = 290 + (self.counter * 65)
+            self.create_field("device_id_" + str(self.counter), 20, row_y, 100, 30)
+            self.create_field("biotime_base_url_" + str(self.counter), 125, row_y, 145, 30)
+            self.create_field("biotime_username_" + str(self.counter), 275, row_y, 90, 30)
+            password_field = "biotime_password_" + str(self.counter)
+            self.create_field(password_field, 20, row_y + 35, 145, 30)
+            getattr(self, password_field).setPlaceholderText("Password")
+            getattr(self, password_field).setEchoMode(QLineEdit.Password)
+            self.create_field("shift_" + str(self.counter), 210, row_y + 35, 155, 30)
 
     def validate_data(self, reg_exp, field_name):
         field = getattr(self, field_name)
@@ -200,12 +239,9 @@ class BiometricWindow(QMainWindow):
 
     def remove_devices_fields(self):
         if self.counter > 0:
-            b = getattr(self, "shift_" + str(self.counter))
-            b.deleteLater()
-            b = getattr(self, "device_id_" + str(self.counter))
-            b.deleteLater()
-            b = getattr(self, "device_ip_" + str(self.counter))
-            b.deleteLater()
+            for name in ("shift_", "device_id_", "biotime_base_url_", "biotime_username_", "biotime_password_"):
+                b = getattr(self, name + str(self.counter))
+                b.deleteLater()
 
             self.counter -= 1
 
@@ -252,30 +288,31 @@ class BiometricWindow(QMainWindow):
         getattr(self, 'start_or_stop_service').setEnabled(True)
 
     def get_device_details(self):
-        device = {}
-        devices = []
+        biotime_url = []
+        shift_map = {}
         shifts = []
 
         for idx in range(0, self.counter+1):
             shift = getattr(self, "shift_" + str(idx)).text()
             device_id = getattr(self, "device_id_" + str(idx)).text()
-            devices.append({
-                'device_id': device_id,
-                'ip': getattr(self, "device_ip_" + str(idx)).text(),
-                'punch_direction': '',
-                'clear_from_device_on_fetch': ''
+            biotime_url.append({
+                'BASE_URL': getattr(self, "biotime_base_url_" + str(idx)).text(),
+                'USERNAME': getattr(self, "biotime_username_" + str(idx)).text(),
+                'PASSWORD': getattr(self, "biotime_password_" + str(idx)).text(),
+                'device_id': device_id
             })
-            if shift in device:
-                device[shift].append(device_id)
+            if shift in shift_map:
+                shift_map[shift].append(device_id)
             else:
-                device[shift]=[device_id]
-        
-        for shift_type_name in device.keys():
+                shift_map[shift] = [device_id]
+
+        for shift_type_name in shift_map.keys():
             shifts.append({
-                'shift_type_name': shift_type_name,
-                'related_device_id': device[shift_type_name]
+                'shift_type_name': [s.strip() for s in shift_type_name.split(',') if s.strip()],
+                'related_device_id': shift_map[shift_type_name],
+                'require_all_terminals': True
             })
-        return devices, shifts
+        return biotime_url, shifts
 
     def get_local_config(self):
         if not validate_fields(self):
@@ -283,8 +320,8 @@ class BiometricWindow(QMainWindow):
         string = self.textbox_import_start_date.text()
         formated_date = "".join([ele for ele in reversed(string.split("/"))])
 
-        devices, shifts = self.get_device_details()
-        return config_template.format(self.textbox_erpnext_api_key.text(), self.textbox_erpnext_api_secret.text(), self.textbox_erpnext_url.text(), self.textbox_pull_frequency.text(), formated_date, json.dumps(devices), json.dumps(shifts))
+        biotime_url, shifts = self.get_device_details()
+        return config_template.format(self.textbox_erpnext_api_key.text(), self.textbox_erpnext_api_secret.text(), self.textbox_erpnext_url.text(), self.textbox_pull_frequency.text(), formated_date, json.dumps(biotime_url), json.dumps(shifts))
 
     def get_running_status(self):
         running_status = []

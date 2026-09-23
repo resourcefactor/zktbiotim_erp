@@ -9,7 +9,6 @@ import time
 import logging
 import signal
 from logging.handlers import RotatingFileHandler
-from zk import ZK, const
 
 def _handle_shutdown(signum, frame):
     print("\n\nShutdown signal received. Exiting gracefully...")
@@ -485,41 +484,6 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
             error_logger.exception(f"Error writing dump file: {e}")
 
     return all_attendance_logs
-
-def get_all_attendance_from_device(ip, port=4370, timeout=30, device_id=None, clear_from_device_on_fetch=False):
-    #  Sample Attendance Logs [{'punch': 255, 'user_id': '22', 'uid': 12349, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 29)},{'punch': 255, 'user_id': '7', 'uid': 7, 'status': 1, 'timestamp': datetime.datetime(2019, 2, 26, 20, 31, 36)}]
-    zk = ZK(ip, port=port, timeout=timeout)
-    conn = None
-    attendances = []
-    try:
-        conn = zk.connect()
-        x = conn.disable_device()
-        # device is disabled when fetching data
-        info_logger.info("\t".join((ip, "Device Disable Attempted. Result:", str(x))))
-        attendances = conn.get_attendance()
-        info_logger.info("\t".join((ip, "Attendances Fetched:", str(len(attendances)))))
-        status.set(f'{device_id}_push_timestamp', None)
-        status.set(f'{device_id}_pull_timestamp', str(datetime.datetime.now()))
-        status.save()
-        if len(attendances):
-            # keeping a backup before clearing data incase the programs fails.
-            # if everything goes well then this file is removed automatically at the end.
-            dump_file_name = get_dump_file_name_and_directory(device_id, ip)
-            with open(dump_file_name, 'w+') as f:
-                f.write(json.dumps(list(map(lambda x: x.__dict__, attendances)), default=datetime.datetime.timestamp))
-            if clear_from_device_on_fetch:
-                x = conn.clear_attendance()
-                info_logger.info("\t".join((ip, "Attendance Clear Attempted. Result:", str(x))))
-        x = conn.enable_device()
-        info_logger.info("\t".join((ip, "Device Enable Attempted. Result:", str(x))))
-    except:
-        error_logger.exception(str(ip)+' exception when fetching from device...')
-        raise Exception('Device fetch failed.')
-    finally:
-        if conn:
-            conn.disconnect()
-    return list(map(lambda x: x.__dict__, attendances))
-
 
 def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=None):
     """
