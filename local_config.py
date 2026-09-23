@@ -1,15 +1,15 @@
 
 # ERPNext related configs
-ERPNEXT_API_KEY = '3e6ad70ba357e1f'
-ERPNEXT_API_SECRET = 'cfc4057a78a5a9d'
-ERPNEXT_URL = 'https://demo.erprf.com'
-ERPNEXT_VERSION = 15
+ERPNEXT_API_KEY = '3623427389736fc'
+ERPNEXT_API_SECRET = '17e1e4897032ac7'
+ERPNEXT_URL = 'https://asma.erprf.com'
+ERPNEXT_VERSION = 16
 
 
 # operational configs
-PULL_FREQUENCY = 1 # in minutes
+PULL_FREQUENCY = 5 # in minutes
 LOGS_DIRECTORY = 'logs' # logs of this script is stored in this directory
-IMPORT_START_DATE = '20250301' # format: '20190501'
+IMPORT_START_DATE = '20260824' # format: '20190501'
 
 # Biometric device configs (all keys mandatory)
     #- device_id - must be unique, strictly alphanumerical chars only. no space allowed.
@@ -17,13 +17,11 @@ IMPORT_START_DATE = '20250301' # format: '20190501'
     #- punch_direction - 'IN'/'OUT'/'AUTO'/None
     #- clear_from_device_on_fetch: if set to true then attendance is deleted after fetch is successful.
                                     #(Caution: this feature can lead to data loss if used carelessly.)
-# devices = [
-#     {'device_id':'test','ip':'192.168.18.188', 'punch_direction': None, 'clear_from_device_on_fetch': False}
-# ]
+ # devices = [{'device_id':'test','ip':'192.168.18.188', 'punch_direction': None, 'clear_from_device_on_fetch': False} ]
 
 
 biotime_url = [
-    {'BASE_URL':'http://127.0.0.1:8080', 'USERNAME': 'RfAdmin', 'PASSWORD': 'RfBioTime@2025', 'device_id': 'biotime'}
+    {'BASE_URL':'http://192.168.0.103:8081', 'USERNAME': 'attendance', 'PASSWORD': 'MrMsAt@2026', 'device_id': 'biotime'}
 ]
 
 # Terminal connectivity settings
@@ -39,13 +37,13 @@ expected_terminals = {
 
 # Configs updating sync timestamp in the Shift Type DocType
 # please, read this thread to know why this is necessary https://discuss.erpnext.com/t/v-12-hr-auto-attendance-purpose-of-last-sync-of-checkin-in-shift-type/52997
-shift_type_device_mapping = [
-    {
-        'shift_type_name': ['Morning', 'Testing'],
-        'related_device_id': ['test'],
-        'require_all_terminals': True  # Enforce all-terminals check before updating shift type
-    }
-]
+# shift_type_device_mapping = [
+    # {
+        # 'shift_type_name': ['Morning', 'Testing'],
+        # 'related_device_id': ['test'],
+        # 'require_all_terminals': True  # Enforce all-terminals check before updating shift type
+    # }
+# ]
 
 
 # Ignore following exceptions thrown by ERPNext and continue importing punch logs.

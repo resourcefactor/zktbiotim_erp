@@ -1,1 +1,23 @@
-{"lift_off_timestamp":"2025-07-24 15:05:39.034226","mission_accomplished_timestamp":"2025-07-24 15:05:44.075741","TST_push_timestamp":"2025-07-22 14:46:38.918570","biotime_pull_timestamp":"2025-07-24 15:05:41.072773","biotime_push_timestamp":"2025-07-24 15:05:44.071750"}
+{
+  "lift_off_timestamp": "2026-09-23 16:43:50.543529",
+  "biotime_terminals": "[\"Galleria-Ground\", \"Dubai-Mall\", \"Khawaneej\", \"NAS-Mall\", \"Al-Jada\", \"HO\", \"Galleria-1\"]",
+  "biotime_pull_timestamp": "2026-09-23 16:43:50.971778",
+  "Dubai-Mall_last_attendance_timestamp": "2026-09-23 16:09:51",
+  "Dubai-Mall_last_checked": "2026-09-23 16:13:46.600118",
+  "Al-Jada_last_attendance_timestamp": "2026-09-23 16:41:40",
+  "Al-Jada_last_checked": "2026-09-23 16:43:51.694684",
+  "NAS-Mall_last_attendance_timestamp": "2026-09-23 15:47:57",
+  "NAS-Mall_last_checked": "2026-09-23 15:59:11.545715",
+  "Galleria-2_last_attendance_timestamp": "2026-09-23 08:13:02",
+  "Galleria-2_last_checked": "2026-09-23 08:56:12.182688",
+  "Galleria-1_last_attendance_timestamp": "2026-09-22 11:50:33",
+  "Galleria-1_last_checked": "2026-09-22 19:32:10.875440",
+  "Khawaneej_last_attendance_timestamp": "2026-09-22 15:56:48",
+  "Khawaneej_last_checked": "2026-09-22 19:32:10.875440",
+  "biotime_push_timestamp": "2026-09-23 16:43:51.695665",
+  "mission_accomplished_timestamp": "2026-09-23 16:43:51.696312",
+  "HO_last_attendance_timestamp": "2026-09-23 09:28:17",
+  "HO_last_checked": "2026-09-23 09:47:50.767163",
+  "Galleria-Ground_last_attendance_timestamp": "2026-09-23 15:00:56",
+  "Galleria-Ground_last_checked": "2026-09-23 15:59:11.544080"
+}

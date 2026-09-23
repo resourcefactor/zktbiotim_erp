@@ -58,6 +58,15 @@ EMPLOYEE_INACTIVE_ERROR_MESSAGE = "Transactions cannot be created for an Inactiv
 DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE = "This employee already has a log with the same timestamp"
 allowlisted_errors = [EMPLOYEE_NOT_FOUND_ERROR_MESSAGE, EMPLOYEE_INACTIVE_ERROR_MESSAGE, DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE]
 
+# Only "no matching employee" is retried (the mapping may get fixed later). A duplicate
+# checkin means the record already exists in ERPNext under that exact timestamp, and an
+# inactive employee is a settled business fact - neither should ever be retried.
+RETRYABLE_ERROR_MESSAGES = [EMPLOYEE_NOT_FOUND_ERROR_MESSAGE]
+
+# Stop retrying a record once it has been pending for longer than this, to avoid retrying
+# forever for an employee mapping that will never be fixed.
+PENDING_RETRY_MAX_AGE_DAYS = 7
+
 if hasattr(config,'allowed_exceptions'):
     allowlisted_errors_temp = []
     for error_number in config.allowed_exceptions:
@@ -67,6 +76,13 @@ if hasattr(config,'allowed_exceptions'):
 device_punch_values_IN = getattr(config, 'device_punch_values_IN', [0,4])
 device_punch_values_OUT = getattr(config, 'device_punch_values_OUT', [1,5])
 ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
+
+# Fetch windows are re-queried using a small overlap before the previous cycle's end time,
+# because a record's punch_time (device clock) can be earlier than its upload_time (when
+# Biotime actually receives and stores it) - a record uploaded just after a cycle's HTTP
+# request was made would otherwise fall permanently between that window and the next one,
+# since the next window's start is taken from punch_time, not upload_time.
+FETCH_WINDOW_OVERLAP = datetime.timedelta(minutes=getattr(config, 'FETCH_WINDOW_OVERLAP_MINUTES', 2))
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -164,8 +180,14 @@ def main():
 def push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps):
     """
     Pushes a single attendance record to ERPNext and logs the outcome.
-    Returns True if the record is settled (pushed, or failed with an allowlisted
-    error that should not be retried again), False if it should remain pending retry.
+    Returns one of:
+      'settled'   - pushed successfully, or failed with a terminal (non-retryable)
+                    allowlisted error: a duplicate checkin (already exists in ERPNext under
+                    this exact timestamp - retrying would never help) or an inactive
+                    employee (a settled business fact, not something that will change).
+      'retryable' - failed because no matching employee was found in ERPNext yet (the
+                    mapping may get configured later); queued for retry, subject to
+                    PENDING_RETRY_MAX_AGE_DAYS.
     Raises on a non-allowlisted failure, matching the existing halt-on-unknown-error behavior.
     """
     punch_direction = device.get('punch_direction', 'AUTO')
@@ -191,7 +213,7 @@ def push_attendance_log(log, device, attendance_success_logger, attendance_faile
             terminal_alias,
             json.dumps(log, default=str)
         ]))
-        return True
+        return 'settled'
     else:
         attendance_failed_logger.error("\t".join([
             str(erpnext_status_code), str(log['uid']),
@@ -200,9 +222,17 @@ def push_attendance_log(log, device, attendance_success_logger, attendance_faile
             terminal_alias,
             json.dumps(log, default=str)
         ]))
+        if DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in erpnext_message:
+            # Already exists in ERPNext under this exact timestamp - nothing to retry.
+            return 'settled'
+        if any(error in erpnext_message for error in RETRYABLE_ERROR_MESSAGES):
+            return 'retryable'
         if not any(error in erpnext_message for error in allowlisted_errors):
             raise Exception('API Call to ERPNext Failed.')
-        return False
+        # An allowlisted error that is neither the duplicate case nor a known retryable
+        # case (e.g. allowed_exceptions configured with only a subset) - treat as settled
+        # rather than retried forever.
+        return 'settled'
 
 def pull_process_and_push_data(device, device_attendance_logs=None):
     """
@@ -215,9 +245,11 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
 
     terminal_last_timestamps = {}
 
-    # Retry any records that previously failed with an allowlisted error (e.g. employee
-    # mapping not yet configured in ERPNext). Once the mapping is fixed, this picks them
-    # back up automatically on the next cycle instead of losing them silently.
+    # Retry any records that previously failed because no matching employee was found in
+    # ERPNext yet. Once the mapping is fixed, this picks them back up automatically on the
+    # next cycle. A record is dropped for good after PENDING_RETRY_MAX_AGE_DAYS - past that
+    # point the mapping is assumed to never be fixed, and retrying forever would just keep
+    # hammering ERPNext with the same failure.
     pending_records = load_pending_retry_records(device['device_id'])
     if pending_records:
         print(f"\n{'='*60}")
@@ -225,14 +257,24 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
         print(f"{'='*60}")
         still_pending = []
         retried_ok = 0
+        expired = 0
+        now = datetime.datetime.now()
         for log in pending_records:
-            settled = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
-            if settled:
+            first_failed_at = log.get('first_failed_at') or now
+            outcome = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
+            if outcome == 'settled':
                 retried_ok += 1
+            elif now - first_failed_at > datetime.timedelta(days=PENDING_RETRY_MAX_AGE_DAYS):
+                expired += 1
+                info_logger.warning(
+                    f"Dropping record after {PENDING_RETRY_MAX_AGE_DAYS} days of failed retries "
+                    f"(uid={log.get('uid')}, user_id={log.get('user_id')}, timestamp={log.get('timestamp')})"
+                )
             else:
+                log['first_failed_at'] = first_failed_at
                 still_pending.append(log)
         save_pending_retry_records(device['device_id'], still_pending)
-        print(f"✓ {retried_ok} retried record(s) succeeded, {len(still_pending)} still pending")
+        print(f"✓ {retried_ok} retried record(s) succeeded, {len(still_pending)} still pending, {expired} expired after {PENDING_RETRY_MAX_AGE_DAYS} days")
 
     # Determine start time
     import_start_date = _safe_convert_date(config.IMPORT_START_DATE, "%Y%m%d")
@@ -277,7 +319,14 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
         # Only advance the pull watermark once the fetch has completed in full -
         # a partial/failed fetch (get_attendance_from_biotime now raises instead of
         # silently truncating) must not move the window past unfetched records.
-        status.set(f"{device['device_id']}_pull_timestamp", str(now))
+        # The watermark is set slightly behind `now` (FETCH_WINDOW_OVERLAP) so the next
+        # cycle re-queries that overlap: a record's punch_time can be earlier than its
+        # upload_time, so a record uploaded just after this request was made would
+        # otherwise be excluded by both this window (not yet uploaded) and the next one
+        # (its punch_time is before the next window's start). The resume-by-(user_id,
+        # timestamp) logic below already de-dupes records re-fetched in this overlap.
+        next_watermark = now - FETCH_WINDOW_OVERLAP
+        status.set(f"{device['device_id']}_pull_timestamp", str(next_watermark))
         status.save()
         if not device_attendance_logs:
             print(f"✗ No attendance logs found")
@@ -333,8 +382,9 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
 
     newly_failed_records = []
     for log in device_attendance_logs[index_of_last+1:]:
-        settled = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
-        if not settled:
+        outcome = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
+        if outcome == 'retryable':
+            log['first_failed_at'] = datetime.datetime.now()
             newly_failed_records.append(log)
 
     if newly_failed_records:
@@ -786,7 +836,11 @@ def load_pending_retry_records(device_id):
     try:
         with open(pending_file, 'r') as f:
             records = json.load(f)
-        return [_apply_function_to_key(r, 'timestamp', datetime.datetime.fromtimestamp) for r in records]
+        records = [_apply_function_to_key(r, 'timestamp', datetime.datetime.fromtimestamp) for r in records]
+        for r in records:
+            if r.get('first_failed_at') is not None:
+                r['first_failed_at'] = datetime.datetime.fromtimestamp(r['first_failed_at'])
+        return records
     except Exception as e:
         error_logger.exception(f"Error loading pending retry file {pending_file}: {e}")
         return []
