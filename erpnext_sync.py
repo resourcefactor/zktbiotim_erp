@@ -8,6 +8,7 @@ import sys
 import time
 import logging
 import signal
+import threading
 from logging.handlers import RotatingFileHandler
 
 def _handle_shutdown(signum, frame):
@@ -23,6 +24,7 @@ class SimpleDB:
         self.location = location
         self.auto_dump = auto_dump
         self.db = {}
+        self._loaded = False
         self.load_data()
 
     def load_data(self):
@@ -34,6 +36,7 @@ class SimpleDB:
                 self.db = {}
         else:
             self.db = {}
+        self._loaded = True
 
     def set(self, key, value):
         self.db[key] = value
@@ -42,7 +45,11 @@ class SimpleDB:
         return True
 
     def get(self, key):
-        self.load_data()
+        # status.json has a single reader/writer (this process), so the in-memory copy
+        # never goes stale - reloading on every .get() was a full file read/parse for no
+        # benefit (this process is the only thing that ever changes the file).
+        if not self._loaded:
+            self.load_data()
         return self.db.get(key, None)
 
     def save(self):
@@ -83,6 +90,19 @@ ERPNEXT_VERSION = getattr(config, 'ERPNEXT_VERSION', 14)
 # request was made would otherwise fall permanently between that window and the next one,
 # since the next window's start is taken from punch_time, not upload_time.
 FETCH_WINDOW_OVERLAP = datetime.timedelta(minutes=getattr(config, 'FETCH_WINDOW_OVERLAP_MINUTES', 2))
+
+# Network calls had no timeout at all, so a server that accepts a TCP connection but never
+# sends a response body would hang main() forever - these bound every requests call.
+# (connect_timeout, read_timeout) tuples: Biotime is a LAN device API, ERPNext is a public
+# HTTPS API with more latency headroom.
+BIOTIME_REQUEST_TIMEOUT = getattr(config, 'BIOTIME_REQUEST_TIMEOUT', (5, 30))
+ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', (10, 60))
+
+# The pending-retry queue is dominated by permanently-unmapped employee codes that fail
+# identically every attempt - retrying it on the same 5-minute cadence as live punches wastes
+# HTTP calls and floods the failed log for no benefit, since only something like an HR mapping
+# fix would ever change the outcome. Retried on its own, much slower cadence instead.
+PENDING_RETRY_INTERVAL_HOURS = getattr(config, 'PENDING_RETRY_INTERVAL_HOURS', 12)
 
 # possible area of further developemt
     # Real-time events - setup getting events pushed from the machine rather then polling.
@@ -177,7 +197,7 @@ def main():
         print(f"\n✗ CRITICAL ERROR in main function - check logs/error.log")
 
 
-def push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps):
+def push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps, log_failure=True):
     """
     Pushes a single attendance record to ERPNext and logs the outcome.
     Returns one of:
@@ -189,6 +209,11 @@ def push_attendance_log(log, device, attendance_success_logger, attendance_faile
                     mapping may get configured later); queued for retry, subject to
                     PENDING_RETRY_MAX_AGE_DAYS.
     Raises on a non-allowlisted failure, matching the existing halt-on-unknown-error behavior.
+
+    log_failure=False suppresses the attendance_failed_logger write on failure. Used when
+    retrying an already-pending record: it was already logged once when first seen, and the
+    pending-retry queue file is itself the durable record of what's stuck and why, so
+    re-logging an identical failure on every retry attempt just adds noise.
     """
     punch_direction = device.get('punch_direction', 'AUTO')
     if punch_direction == 'AUTO':
@@ -211,17 +236,21 @@ def push_attendance_log(log, device, attendance_success_logger, attendance_faile
             str(log['user_id']), str(log['timestamp'].timestamp()),
             str(log['punch']), str(log['status']),
             terminal_alias,
-            json.dumps(log, default=str)
+            # Every field already appears individually above except first_failed_at (only
+            # set on records that came through the retry path) - a full json.dumps(log) of
+            # already-logged fields was pure bulk on every line.
+            str(log.get('first_failed_at', ''))
         ]))
         return 'settled'
     else:
-        attendance_failed_logger.error("\t".join([
-            str(erpnext_status_code), str(log['uid']),
-            str(log['user_id']), str(log['timestamp'].timestamp()),
-            str(log['punch']), str(log['status']),
-            terminal_alias,
-            json.dumps(log, default=str)
-        ]))
+        if log_failure:
+            attendance_failed_logger.error("\t".join([
+                str(erpnext_status_code), str(log['uid']),
+                str(log['user_id']), str(log['timestamp'].timestamp()),
+                str(log['punch']), str(log['status']),
+                terminal_alias,
+                str(log.get('first_failed_at', ''))
+            ]))
         if DUPLICATE_EMPLOYEE_CHECKIN_ERROR_MESSAGE in erpnext_message:
             # Already exists in ERPNext under this exact timestamp - nothing to retry.
             return 'settled'
@@ -240,41 +269,64 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     """
     attendance_success_log_file = '_'.join(["attendance_success_log", device['device_id']])
     attendance_failed_log_file = '_'.join(["attendance_failed_log", device['device_id']])
+    # attendance_success_logger keeps the default retention - get_last_line_from_file()
+    # depends on its live file for the resume cursor, and it's not the volume driver.
     attendance_success_logger = setup_logger(attendance_success_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_success_log_file])+'.log')
-    attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log')
+    # attendance_failed_logger is the single biggest contributor to disk growth (repeated
+    # "No Employee found" failures) - smaller rotation ceiling than the default.
+    attendance_failed_logger = setup_logger(attendance_failed_log_file, '/'.join([config.LOGS_DIRECTORY, attendance_failed_log_file])+'.log', max_bytes=5000000, backup_count=5)
 
     terminal_last_timestamps = {}
 
     # Retry any records that previously failed because no matching employee was found in
-    # ERPNext yet. Once the mapping is fixed, this picks them back up automatically on the
-    # next cycle. A record is dropped for good after PENDING_RETRY_MAX_AGE_DAYS - past that
-    # point the mapping is assumed to never be fixed, and retrying forever would just keep
-    # hammering ERPNext with the same failure.
-    pending_records = load_pending_retry_records(device['device_id'])
-    if pending_records:
-        print(f"\n{'='*60}")
-        print(f"Retrying {len(pending_records)} previously-failed record(s) for device: {device['device_id']}")
-        print(f"{'='*60}")
-        still_pending = []
-        retried_ok = 0
-        expired = 0
-        now = datetime.datetime.now()
-        for log in pending_records:
-            first_failed_at = log.get('first_failed_at') or now
-            outcome = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
-            if outcome == 'settled':
-                retried_ok += 1
-            elif now - first_failed_at > datetime.timedelta(days=PENDING_RETRY_MAX_AGE_DAYS):
-                expired += 1
-                info_logger.warning(
-                    f"Dropping record after {PENDING_RETRY_MAX_AGE_DAYS} days of failed retries "
-                    f"(uid={log.get('uid')}, user_id={log.get('user_id')}, timestamp={log.get('timestamp')})"
-                )
-            else:
-                log['first_failed_at'] = first_failed_at
-                still_pending.append(log)
-        save_pending_retry_records(device['device_id'], still_pending)
-        print(f"✓ {retried_ok} retried record(s) succeeded, {len(still_pending)} still pending, {expired} expired after {PENDING_RETRY_MAX_AGE_DAYS} days")
+    # ERPNext yet. Once the mapping is fixed, this picks them back up automatically. A
+    # record is dropped for good after PENDING_RETRY_MAX_AGE_DAYS - past that point the
+    # mapping is assumed to never be fixed, and retrying forever would just keep hammering
+    # ERPNext with the same failure.
+    #
+    # This only runs on its own PENDING_RETRY_INTERVAL_HOURS cadence rather than every
+    # cycle: the queue is dominated by permanently-unmapped employee codes that fail
+    # identically every attempt, so retrying on the same 5-minute cadence as live punches
+    # wasted HTTP calls and flooded the failed log for no benefit - nothing about these
+    # records changes minute-to-minute, only an HR mapping fix ever would. New punches
+    # below are unaffected and still sync every cycle as before.
+    last_retry_attempt = _safe_convert_date(status.get(f"{device['device_id']}_last_retry_attempt"), "%Y-%m-%d %H:%M:%S.%f")
+    should_attempt_retries = (
+        not last_retry_attempt
+        or datetime.datetime.now() - last_retry_attempt >= datetime.timedelta(hours=PENDING_RETRY_INTERVAL_HOURS)
+    )
+    if should_attempt_retries:
+        pending_records = load_pending_retry_records(device['device_id'])
+        if pending_records:
+            print(f"\n{'='*60}")
+            print(f"Retrying {len(pending_records)} previously-failed record(s) for device: {device['device_id']}")
+            print(f"{'='*60}")
+            still_pending = []
+            retried_ok = 0
+            expired = 0
+            now = datetime.datetime.now()
+            for log in pending_records:
+                first_failed_at = log.get('first_failed_at') or now
+                # log_failure=False: this record was already logged once when first seen
+                # (see the new-records path below); re-logging an identical failure on
+                # every retry attempt just adds noise - the pending queue file is the
+                # durable record of what's stuck.
+                outcome = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps, log_failure=False)
+                if outcome == 'settled':
+                    retried_ok += 1
+                elif now - first_failed_at > datetime.timedelta(days=PENDING_RETRY_MAX_AGE_DAYS):
+                    expired += 1
+                    info_logger.warning(
+                        f"Dropping record after {PENDING_RETRY_MAX_AGE_DAYS} days of failed retries "
+                        f"(uid={log.get('uid')}, user_id={log.get('user_id')}, timestamp={log.get('timestamp')})"
+                    )
+                else:
+                    log['first_failed_at'] = first_failed_at
+                    still_pending.append(log)
+            save_pending_retry_records(device['device_id'], still_pending)
+            print(f"✓ {retried_ok} retried record(s) succeeded, {len(still_pending)} still pending, {expired} expired after {PENDING_RETRY_MAX_AGE_DAYS} days")
+        status.set(f"{device['device_id']}_last_retry_attempt", str(datetime.datetime.now()))
+        status.save()
 
     # Determine start time
     import_start_date = _safe_convert_date(config.IMPORT_START_DATE, "%Y%m%d")
@@ -380,15 +432,25 @@ def pull_process_and_push_data(device, device_attendance_logs=None):
     print(f"Processing {len(device_attendance_logs[index_of_last+1:])} new attendance records")
     print(f"{'='*60}")
 
+    # The resume cursor above only advances based on the success log, so a record that
+    # fails here with a retryable error (unmapped employee) will be re-fetched by every
+    # future cycle's overlapping window and land here again. Without de-duplication that
+    # would re-add it to the pending queue with a fresh first_failed_at every cycle,
+    # resetting its retry clock forever and defeating PENDING_RETRY_MAX_AGE_DAYS.
+    existing_pending = load_pending_retry_records(device['device_id'])
+    existing_by_uid = {r['uid']: r for r in existing_pending}
+
     newly_failed_records = []
     for log in device_attendance_logs[index_of_last+1:]:
+        if log['uid'] in existing_by_uid:
+            continue
         outcome = push_attendance_log(log, device, attendance_success_logger, attendance_failed_logger, terminal_last_timestamps)
         if outcome == 'retryable':
             log['first_failed_at'] = datetime.datetime.now()
             newly_failed_records.append(log)
+            existing_by_uid[log['uid']] = log
 
     if newly_failed_records:
-        existing_pending = load_pending_retry_records(device['device_id'])
         save_pending_retry_records(device['device_id'], existing_pending + newly_failed_records)
         print(f"⚠ {len(newly_failed_records)} record(s) queued for retry (see {get_pending_retry_file_name(device['device_id'])})")
 
@@ -408,7 +470,7 @@ def get_biotime_token(base_url, username, password):
     headers = {"Content-Type": "application/json"}
     data = {"username": username, "password": password}
     try:
-        res = requests.post(url, headers=headers, data=json.dumps(data))
+        res = requests.post(url, headers=headers, data=json.dumps(data), timeout=BIOTIME_REQUEST_TIMEOUT)
         print("TOken Response:", res.text)
         res.raise_for_status()
         return res.json().get("token")
@@ -427,7 +489,7 @@ def get_terminals_from_biotime(base_url, token):
         "Authorization": f"Token {token}"
     }
     try:
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers=headers, timeout=BIOTIME_REQUEST_TIMEOUT)
         res.raise_for_status()
         terminals_data = res.json().get("data", [])
 
@@ -469,7 +531,7 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
             print(f"Fetching page {page}...")
             print("Url", url)
             print("Params", params)
-            res = requests.get(url, headers=headers, params=params)
+            res = requests.get(url, headers=headers, params=params, timeout=BIOTIME_REQUEST_TIMEOUT)
             print(res.url,"reponse")
             print("Status", res.status_code)
             res.raise_for_status()
@@ -551,16 +613,31 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         'device_id' : device_id,
         'log_type' : log_type
     }
-    response = requests.request("POST", url, headers=headers, json=data)
+    try:
+        response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        # A network-level failure (timeout, connection refused, etc) isn't an ERPNext
+        # validation outcome - it means we don't actually know whether this record was
+        # accepted, so it must not be logged as a permanent failure or queued for retry
+        # via the normal allowlist path. Let it propagate so main()'s per-device handler
+        # aborts this device's cycle and the whole batch is retried next cycle, same as
+        # before a timeout was ever possible to hit instead of hanging indefinitely.
+        error_logger.error('\t'.join(['Network error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(e)]))
+        raise
     if response.status_code == 200:
         return 200, json.loads(response._content)['message']['name']
     else:
+        if not _is_json_response(response):
+            # A 5xx from nginx/the app server during a deploy or restart (e.g. the "Sorry!
+            # We will be back soon." maintenance page) isn't an ERPNext validation outcome -
+            # same reasoning as the network-exception branch above: we don't know whether
+            # this record was accepted, so it must not be classified as a permanent failure
+            # or queued for retry via the allowlist path. Raise so the per-device handler in
+            # main() retries the whole batch next cycle instead of halting on "unknown error".
+            error_logger.error('\t'.join(['Non-JSON/gateway error during ERPNext API Call (likely a transient restart/maintenance window).', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), str(response.status_code)]))
+            raise requests.exceptions.RequestException(f"Non-JSON response, HTTP {response.status_code}")
         error_str = _safe_get_error_str(response)
-        if EMPLOYEE_NOT_FOUND_ERROR_MESSAGE in error_str:
-            error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
-            # TODO: send email?
-        else:
-            error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
+        error_logger.error('\t'.join(['Error during ERPNext API Call.', str(employee_field_value), str(timestamp.timestamp()), str(device_id), str(log_type), error_str]))
         return response.status_code, error_str
 
 def check_terminal_connectivity(device_id):
@@ -771,7 +848,7 @@ def send_shift_sync_to_erpnext(shift_type_name, sync_timestamp):
         "last_sync_of_checkin" : str(sync_timestamp)
     }
     try:
-        response = requests.request("PUT", url, headers=headers, data=json.dumps(data))
+        response = requests.request("PUT", url, headers=headers, data=json.dumps(data), timeout=ERPNEXT_REQUEST_TIMEOUT)
         if response.status_code == 200:
             info_logger.info("\t".join(['Shift Type last_sync_of_checkin Updated', str(shift_type_name), str(sync_timestamp.timestamp())]))
         else:
@@ -808,12 +885,12 @@ def get_last_line_from_file(file):
     return line
 
 
-def setup_logger(name, log_file, level=logging.INFO, formatter=None):
+def setup_logger(name, log_file, level=logging.INFO, formatter=None, max_bytes=10000000, backup_count=15):
 
     if not formatter:
         formatter = logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s')
 
-    handler = RotatingFileHandler(log_file, maxBytes=10000000, backupCount=50)
+    handler = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count)
     handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
@@ -878,6 +955,13 @@ def _safe_convert_date(datestring, pattern):
         except:
             return None
 
+def _is_json_response(res):
+    try:
+        json.loads(res._content)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 def _safe_get_error_str(res):
     try:
         error_json = json.loads(res._content)
@@ -897,12 +981,25 @@ info_logger = setup_logger('info_logger', '/'.join([config.LOGS_DIRECTORY, 'logs
 terminal_logger = setup_logger('terminal_logger', '/'.join([config.LOGS_DIRECTORY, 'terminal_status.log']))
 status = SimpleDB('/'.join([config.LOGS_DIRECTORY, 'status.json']), auto_dump=True)
 
+MAIN_CYCLE_TIMEOUT_SECONDS = getattr(config, 'MAIN_CYCLE_TIMEOUT_SECONDS', 600)
+
 def infinite_loop(sleep_time=15):
     print("Service Running...")
     print("Press Ctrl+C to stop.")
     while True:
         try:
-            main()
+            # main() runs in a thread so a hung call (e.g. a network read that somehow
+            # outlasts its own timeout, or any other unexpected blocking operation) can't
+            # freeze the service forever - signal.alarm()/SIGALRM don't exist on Windows,
+            # so Thread.join(timeout=...) is the simplest cross-platform wall-clock bound.
+            # Python cannot forcibly kill a thread, so this is a backstop that lets the
+            # loop keep attempting new cycles rather than a guarantee the stuck call itself
+            # is cleaned up - per-request timeouts are what actually prevent the hang.
+            cycle_thread = threading.Thread(target=main, daemon=True)
+            cycle_thread.start()
+            cycle_thread.join(MAIN_CYCLE_TIMEOUT_SECONDS)
+            if cycle_thread.is_alive():
+                error_logger.error(f"main() exceeded {MAIN_CYCLE_TIMEOUT_SECONDS}s watchdog - abandoning this cycle and continuing the loop")
             time.sleep(sleep_time)
         except (KeyboardInterrupt, SystemExit):
             raise
