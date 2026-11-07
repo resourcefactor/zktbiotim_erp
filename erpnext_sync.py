@@ -25,8 +25,16 @@ def _handle_shutdown(signum, frame):
     print("\n\nShutdown signal received. Exiting gracefully...")
     sys.exit(0)
 
-signal.signal(signal.SIGINT, _handle_shutdown)   # Ctrl+C
-signal.signal(signal.SIGTERM, _handle_shutdown)  # kill / systemctl stop
+try:
+    # Only works from the main thread of the main interpreter - true when run as a plain
+    # console script (python erpnext_sync.py), but NOT when run as a Windows service via
+    # erpnext_sync_win.py: pythonservice.exe imports this module from a worker thread, where
+    # signal.signal() raises ValueError and the whole service fails to start. The service
+    # path doesn't need this anyway - SMWinservice.SvcStop() is its own shutdown mechanism.
+    signal.signal(signal.SIGINT, _handle_shutdown)   # Ctrl+C
+    signal.signal(signal.SIGTERM, _handle_shutdown)  # kill / systemctl stop
+except ValueError:
+    pass
 
 # Simple JSON database class to replace pickledb
 class SimpleDB:
@@ -108,6 +116,18 @@ FETCH_WINDOW_OVERLAP = datetime.timedelta(minutes=getattr(config, 'FETCH_WINDOW_
 BIOTIME_REQUEST_TIMEOUT = getattr(config, 'BIOTIME_REQUEST_TIMEOUT', (5, 30))
 ERPNEXT_REQUEST_TIMEOUT = getattr(config, 'ERPNEXT_REQUEST_TIMEOUT', (10, 60))
 
+# requests' own timeout=(connect, read) only bounds the GAP between socket reads, not the
+# total request duration - a server (or a NAT/proxy in the path) that trickles bytes just
+# fast enough to keep resetting that gap, or a connection that goes silently dead at a lower
+# network layer without ever sending a TCP RST/FIN, can hang a call indefinitely. This is
+# exactly what happened in production: 5+ requests piled up over several hours, each stuck
+# forever, with no exception ever raised and no error ever logged - silent, total sync outage
+# despite every individual requests.* call already having a timeout= set.
+# HARD_REQUEST_DEADLINE_SECONDS is an absolute wall-clock cap enforced independently of
+# socket-level activity (see _request_with_deadline below), set comfortably above the normal
+# read timeouts so it never fires on a legitimately-slow-but-alive response.
+HARD_REQUEST_DEADLINE_SECONDS = getattr(config, 'HARD_REQUEST_DEADLINE_SECONDS', 90)
+
 # The pending-retry queue is dominated by permanently-unmapped employee codes that fail
 # identically every attempt - retrying it on the same 5-minute cadence as live punches wastes
 # HTTP calls and floods the failed log for no benefit, since only something like an HR mapping
@@ -133,6 +153,52 @@ MAIN_LOCK_STALE_SECONDS = getattr(config, 'MAIN_LOCK_STALE_SECONDS', MAIN_CYCLE_
 #  - <shift_type>_sync_timestamp
 
 MAIN_LOCK_FILE = os.path.join(config.LOGS_DIRECTORY, 'main.lock')
+
+def _request_with_deadline(method, url, hard_timeout=None, **kwargs):
+    """
+    requests' own timeout=(connect, read) only bounds the gap between socket reads, not
+    total request duration - a response trickling in just fast enough to keep resetting
+    that gap, or a connection gone silently dead below the socket layer, can hang a call
+    forever despite a timeout= being set. This enforces a true wall-clock deadline on top:
+    if the call hasn't returned by hard_timeout, raise immediately rather than keep waiting.
+    The call's own thread is abandoned (not killed - Python cannot forcibly kill a thread)
+    and its connection eventually closes on its own when the OS tears it down. Callers
+    already handle requests.exceptions.Timeout from the normal timeout=, so this raises the
+    same exception type and needs no extra except-branches at call sites.
+
+    Each call gets its own plain daemon thread rather than sharing a bounded
+    ThreadPoolExecutor: a fixed-size pool's workers are each permanently lost to any hang
+    that exceeds hard_timeout (the worker itself is still running the old call, it's just
+    abandoned by this function), so after enough hangs accumulate, EVERY subsequent call
+    queues behind them and stalls for the executor's full queue depth rather than returning
+    in hard_timeout - this was confirmed to cause exactly the silent, indefinite production
+    stall this function exists to prevent. Plain threads have no shared capacity to exhaust:
+    they're cheap while blocked on I/O, so even hundreds of accumulated hung threads (worth
+    many days of this specific failure recurring) impose no delay on new calls.
+    """
+    if hard_timeout is None:
+        hard_timeout = HARD_REQUEST_DEADLINE_SECONDS
+
+    outcome = {}
+    done = threading.Event()
+
+    def _worker():
+        try:
+            outcome['response'] = requests.request(method, url, **kwargs)
+        except Exception as e:
+            outcome['exception'] = e
+        finally:
+            done.set()
+
+    threading.Thread(target=_worker, daemon=True, name='http-deadline').start()
+    if not done.wait(timeout=hard_timeout):
+        raise requests.exceptions.Timeout(
+            f"{method} {url} exceeded the {hard_timeout}s hard deadline (request abandoned, "
+            f"not cancelled - see HARD_REQUEST_DEADLINE_SECONDS)"
+        )
+    if 'exception' in outcome:
+        raise outcome['exception']
+    return outcome['response']
 
 def _acquire_main_lock():
     """
@@ -533,7 +599,7 @@ def get_biotime_token(base_url, username, password):
     headers = {"Content-Type": "application/json"}
     data = {"username": username, "password": password}
     try:
-        res = requests.post(url, headers=headers, data=json.dumps(data), timeout=BIOTIME_REQUEST_TIMEOUT)
+        res = _request_with_deadline("POST", url, headers=headers, data=json.dumps(data), timeout=BIOTIME_REQUEST_TIMEOUT)
         _vprint("Token Response:", res.text)
         res.raise_for_status()
         return res.json().get("token")
@@ -552,7 +618,7 @@ def get_terminals_from_biotime(base_url, token):
         "Authorization": f"Token {token}"
     }
     try:
-        res = requests.get(url, headers=headers, timeout=BIOTIME_REQUEST_TIMEOUT)
+        res = _request_with_deadline("GET", url, headers=headers, timeout=BIOTIME_REQUEST_TIMEOUT)
         res.raise_for_status()
         terminals_data = res.json().get("data", [])
 
@@ -594,7 +660,7 @@ def get_attendance_from_biotime(base_url, token, start_time, end_time, device_id
             _vprint(f"Fetching page {page}...")
             _vprint("Url", url)
             _vprint("Params", params)
-            res = requests.get(url, headers=headers, params=params, timeout=BIOTIME_REQUEST_TIMEOUT)
+            res = _request_with_deadline("GET", url, headers=headers, params=params, timeout=BIOTIME_REQUEST_TIMEOUT)
             _vprint(res.url,"reponse")
             _vprint("Status", res.status_code)
             res.raise_for_status()
@@ -677,7 +743,7 @@ def send_to_erpnext(employee_field_value, timestamp, device_id=None, log_type=No
         'log_type' : log_type
     }
     try:
-        response = requests.request("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
+        response = _request_with_deadline("POST", url, headers=headers, json=data, timeout=ERPNEXT_REQUEST_TIMEOUT)
     except requests.exceptions.RequestException as e:
         # A network-level failure (timeout, connection refused, etc) isn't an ERPNext
         # validation outcome - it means we don't actually know whether this record was
@@ -911,7 +977,7 @@ def send_shift_sync_to_erpnext(shift_type_name, sync_timestamp):
         "last_sync_of_checkin" : str(sync_timestamp)
     }
     try:
-        response = requests.request("PUT", url, headers=headers, data=json.dumps(data), timeout=ERPNEXT_REQUEST_TIMEOUT)
+        response = _request_with_deadline("PUT", url, headers=headers, data=json.dumps(data), timeout=ERPNEXT_REQUEST_TIMEOUT)
         if response.status_code == 200:
             info_logger.info("\t".join(['Shift Type last_sync_of_checkin Updated', str(shift_type_name), str(sync_timestamp.timestamp())]))
         else:
